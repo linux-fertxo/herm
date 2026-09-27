@@ -114,3 +114,64 @@ de `src/service/hermes-analytics.ts`? Sospecha: el test, no el producto.
 - Nombres de una sola palabra para locales/funciones; sin `else`; evitar `any`/try-catch.
 - Nunca lanzar un script suelto que toque `~/.hermes`: setear `HERMES_HOME` a tmpdir primero.
 - `bun test` ← `test/preload.ts` ya aísla el home.
+- **Correr la suite con `bun run test`** (el script fija `TZ=UTC TMPDIR=/tmp`).
+
+## Sesión 3 (2026-09-28) — fases 4 y 5 hechas y verificadas EN VIVO
+
+### Verificación en vivo del camino server→client (la buena)
+
+`herm` real (CONTROL=1, `localhost:7788`) contra el gateway real (v0.21.5, contract 8):
+
+```
+POST /send  "usa la herramienta clarify … ¿qué color pruebo? rojo/azul"
+→ frame real del backend → tarjeta renderizada en el transcript:
+   ┃ ask ¿qué color pruebo?
+   ┃ ▸ 1. rojo (Recommended)   2. azul   3. Other (type your answer)
+   ┃ ↑/↓ · Enter · 1-2 · Esc cancel
+POST /key "2"  → tarjeta se cierra, outcome "✓ ¿qué color pruebo? / 1 answered"
+respuesta del agente: "Elegiste azul. 🎨"
+```
+
+Eso es el ida y vuelta completo: capabilities anunciadas → frame `srq` recibido →
+render → `respond(id,{answer})` → el backend recibe la respuesta.
+
+**Truco para probarlo sin tocar la política de aprobaciones: `clarify`.** Las
+aprobaciones dependen de `approvals.mode`; clarify no.
+
+### Gotchas nuevos
+
+- **`approvals.mode: smart` NO genera preguntas.** El juez auxiliar auto-aprueba
+  (incluso un `echo 'rm -rf …' | sh`, que el escáner marca HIGH). Para ver una
+  tarjeta de approval hay que poner `manual` — y eso lo decide Fertxo: cambiar su
+  config a `manual` hace que *también mis propios comandos* pidan permiso, y a las
+  01:30 no hay quien los conteste. **No tocar `approvals.mode` sin él delante.**
+  La vía sancionada para restaurarlo: `hermes config set approvals.mode smart`
+  (la herramienta de edición rechaza escribir config.yaml, y `patch` también).
+- **El extractor es pin-scoped, no está roto.** `gen-schema:check` falla contra el
+  Hermes *instalado* (moved `DEFAULT_CONFIG` → `hermes_cli/config_defaults.py`;
+  métodos → `methods_*.py`) pero pasa contra el **pin**. Los checks se corren así:
+  ```bash
+  mkdir -p /tmp/hermes-pin && cd /tmp/hermes-pin && git init -q . \
+    && git remote add origin https://github.com/NousResearch/hermes-agent.git \
+    && git fetch --depth=1 origin $(python3 -c "import json;print(json.load(open('hermes.contract.json'))['pinned'])") \
+    && git checkout -q --detach FETCH_HEAD
+  cd ~/dev/herm && HERMES_AGENT_ROOT=/tmp/hermes-pin bun run gen-hermes-manifest:check
+  ```
+- **El pin (jul-2026) no trae `apps/shared/src/gateway-contract.openrpc.json`.** El
+  artefacto OpenRPC es posterior; por eso el manifiesto sigue derivándose por AST y
+  `src/context/gateway-contract.ts` (runtime, fase 1) lee el artefacto del Hermes
+  *instalado* con fallback embebido. Subir el pin = regenerar manifiesto+schema+
+  fixtures+overlay; no se hace ahora (no aporta función y arriesga una suite verde).
+- **Trampa de zona horaria en la suite** (tercera trampa de entorno): `bun test`
+  corre el reloj JS en **UTC** pero `bun:sqlite` mantiene la zona del **sistema**;
+  en host no-UTC se desalinean un día y `analytics()` falla siempre entre 00:00 y
+  02:00 CEST, nunca en CI. Fijado con `TZ=UTC` en el script y en CI.
+
+### Estado de fases
+
+- 1-3 ✅ (sesión 2) · **4 ✅** (implementada + verificada en vivo) · **5 ✅** (purga
+  hecha; `*.respond` fuera de src y harness) · **6 ✅** (manifiesto regenerado; los 3
+  checks pasan contra el pin) · **7 ✅** (`bunx tsc --noEmit` limpio, `bun run build`
+  OK, suite **1445 pass / 0 fail**) · **8 ⏳**: queda espejo a `gitea.fertxo.com` e
+  instalar como `herm` (sustituir el global `herm-tui@1.10.0`).
+
