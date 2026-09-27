@@ -5,11 +5,11 @@ import type { GatewayEvent } from "../src/context/wire"
 
 describe("prompts", () => {
 
-  async function expires(ev: GatewayEvent, visible: string, closed: string, method: string) {
+  async function expires(ev: GatewayEvent, id: string, visible: string, closed: string) {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
     act(() => t.gw.push({ type: "message.start" }))
-    act(() => t.gw.push(ev))
+    act(() => { t.gw.ask$(id); t.gw.push(ev) })
     await until(t, () => t.frame().includes(visible))
 
     act(() => t.gw.push({
@@ -20,17 +20,17 @@ describe("prompts", () => {
 
     act(() => t.keys.pressKey("1"))
     await t.settle()
-    expect(t.gw.last(method)).toBeUndefined()
+    expect(t.gw.answers).toEqual([])
     t.destroy()
   }
 
   test("clarify: open-ended (no choices) free-text input", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
-    act(() => t.gw.push({
+    act(() => { t.gw.ask$("q2"); t.gw.push({
       type: "clarify.request",
       payload: { request_id: "q2", question: "explain?", choices: null },
-    }))
+    }) })
     await t.settle()
     expect(t.frame()).toContain("explain?")
 
@@ -38,7 +38,7 @@ describe("prompts", () => {
     await t.settle()
     act(() => t.keys.pressEnter())
     await t.settle()
-    expect(t.gw.last("clarify.respond")?.params.answer).toBe("my custom answer")
+    expect(t.gw.answers).toEqual([{ id: "q2", result: { answer: "my custom answer" } }])
     t.destroy()
   })
 
@@ -46,94 +46,79 @@ describe("prompts", () => {
   test("sudo: escape cancels with empty password", async () => {
     const t = await mount()
     await until(t, () => t.frame().includes("Ready"))
-    act(() => t.gw.push({ type: "sudo.request", payload: { request_id: "su1" } }))
+    act(() => { t.gw.ask$("su1"); t.gw.push({ type: "sudo.request", payload: { request_id: "su1" } }) })
     await t.settle()
     expect(t.frame()).toContain("Sudo required")
 
     act(() => t.keys.pressEscape())
     await t.settle()
-    expect(t.gw.last("sudo.respond")?.params).toMatchObject({ request_id: "su1", password: "" })
+    expect(t.gw.answers).toEqual([{ id: "su1", result: { value: "" } }])
     expect(t.frame()).not.toContain("Sudo required")
     t.destroy()
   })
 
-  test("approval response failure keeps the card retryable", async () => {
-    let fail = true
-    const gw = new MockGateway({
-      "approval.respond": () => {
-        if (fail) throw new Error("approval wire down")
-        return { resolved: true }
-      },
-    })
+  async function withdrawn(ev: GatewayEvent, id: string, visible: string, closed: string) {
+    const gw = new MockGateway()
     const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Ready"))
-    act(() => gw.push({ type: "approval.request", payload: { command: "rm x", description: "delete" } }))
-    await until(t, () => t.frame().includes("Permission required"))
+    await until(t, () => gw.ready && t.frame().includes("Ready"))
+    act(() => { gw.ask$(id); gw.push(ev) })
+    await until(t, () => t.frame().includes(visible))
 
+    // The backend gave up on its own question (deadline, or a reconnect that
+    // dropped the open frame). Answering must report that instead of latching
+    // the card into a success it never had.
+    gw.withdraw$(id)
     act(() => t.keys.pressEnter())
-    await until(t, () => t.frame().includes("approval wire down"))
-    expect(t.frame()).toContain("Permission required")
+    await until(t, () => t.frame().includes("no longer open"))
+    expect(gw.answers).toEqual([])
+    expect(t.frame()).toContain(visible)
 
-    fail = false
+    // A reconnect replay re-delivers the question still waiting for an answer,
+    // so the very same card becomes answerable again.
+    gw.ask$(id)
     act(() => t.keys.pressEnter())
-    await until(t, () => !t.frame().includes("Permission required"))
-    expect(gw.calls.filter(c => c.method === "approval.respond")).toHaveLength(2)
+    await until(t, () => !t.frame().includes(closed))
+    expect(gw.answers).toHaveLength(1)
+    expect(t.frame()).not.toContain("no longer open")
     t.destroy()
+  }
+
+  test("withdrawn approval keeps the card answerable and never reports success", async () => {
+    await withdrawn(
+      { type: "approval.request", payload: { request_id: "srq-w1", command: "rm x", description: "delete" } },
+      "srq-w1", "Permission required", "Permission required",
+    )
   })
 
-  test("clarify response failure keeps the question retryable", async () => {
-    let fail = true
-    const gw = new MockGateway({
-      "clarify.respond": () => {
-        if (fail) throw new Error("clarify wire down")
-        return { resolved: true }
-      },
-    })
-    const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Ready"))
-    act(() => gw.push({
-      type: "clarify.request",
-      payload: { request_id: "q-retry", question: "retry choice?", choices: ["yes", "no"] },
-    }))
-    await until(t, () => t.frame().includes("retry choice?"))
-
-    act(() => t.keys.pressEnter())
-    await until(t, () => t.frame().includes("clarify wire down"))
-    expect(t.frame()).toContain("retry choice?")
-
-    fail = false
-    act(() => t.keys.pressEnter())
-    await until(t, () => !t.frame().includes("Other (type your answer)"))
-    expect(t.frame()).not.toContain("clarify wire down")
-    expect(gw.calls.filter(c => c.method === "clarify.respond")).toHaveLength(2)
-    t.destroy()
+  test("withdrawn clarify choice keeps the question answerable", async () => {
+    await withdrawn(
+      { type: "clarify.request", payload: { request_id: "q-retry", question: "retry choice?", choices: ["yes", "no"] } },
+      "q-retry", "retry choice?", "Other (type your answer)",
+    )
   })
 
-  test("secret response failure preserves the masked value for retry", async () => {
-    let fail = true
-    const gw = new MockGateway({
-      "secret.respond": () => {
-        if (fail) throw new Error("secret wire down")
-        return { resolved: true }
-      },
-    })
+  test("withdrawn secret keeps the masked value for retry", async () => {
+    const gw = new MockGateway()
     const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Ready"))
-    act(() => gw.push({
+    await until(t, () => gw.ready && t.frame().includes("Ready"))
+    act(() => { gw.ask$("s-retry"); gw.push({
       type: "secret.request",
       payload: { request_id: "s-retry", prompt: "token?", env_var: "TOKEN" },
-    }))
+    }) })
     await until(t, () => t.frame().includes("Secret: TOKEN"))
     await act(async () => { await t.keys.typeText("hunter2") })
 
+    gw.withdraw$("s-retry")
     act(() => t.keys.pressEnter())
-    await until(t, () => t.frame().includes("secret wire down"))
+    await until(t, () => t.frame().includes("no longer open"))
+    expect(gw.answers).toEqual([])
+    // The masked value survives, so a re-delivered question needs no retyping.
     expect(t.frame()).toContain("•".repeat(7))
 
-    fail = false
+    gw.ask$("s-retry")
     act(() => t.keys.pressEnter())
     await until(t, () => !t.frame().includes("Secret: TOKEN"))
-    expect(gw.calls.filter(c => c.method === "secret.respond")).toHaveLength(2)
+    expect(gw.answers).toEqual([{ id: "s-retry", result: { value: "hunter2" } }])
     t.destroy()
   })
 
@@ -141,25 +126,28 @@ describe("prompts", () => {
     await expires({
       type: "clarify.request",
       payload: { request_id: "clarify-exp", question: "EXPIRING_CLARIFY_SENTINEL", choices: ["yes"] },
-    }, "EXPIRING_CLARIFY_SENTINEL", "Other (type your answer)", "clarify.respond")
+    }, "clarify-exp", "EXPIRING_CLARIFY_SENTINEL", "Other (type your answer)")
   })
 
   test("sudo prompt expires on message.complete and cannot answer later", async () => {
-    await expires({ type: "sudo.request", payload: { request_id: "sudo-exp" } }, "Sudo required", "Enter your password", "sudo.respond")
+    await expires(
+      { type: "sudo.request", payload: { request_id: "sudo-exp" } },
+      "sudo-exp", "Sudo required", "Enter your password",
+    )
   })
 
   test("secret prompt expires on message.complete and cannot answer later", async () => {
     await expires({
       type: "secret.request",
       payload: { request_id: "secret-exp", prompt: "SECRET_PROMPT_SHOULD_DISAPPEAR", env_var: "EXPIRING_TOKEN" },
-    }, "Secret: EXPIRING_TOKEN", "SECRET_PROMPT_SHOULD_DISAPPEAR", "secret.respond")
+    }, "secret-exp", "Secret: EXPIRING_TOKEN", "SECRET_PROMPT_SHOULD_DISAPPEAR")
   })
 
   test("terminal-read prompt expires on message.complete and cannot answer later", async () => {
     await expires({
       type: "terminal.read.request",
       payload: { request_id: "term-exp", start: 10, count: 20 },
-    }, "Terminal read required", "Enter/Esc returns empty", "terminal.read.respond")
+    }, "term-exp", "Terminal read required", "Enter/Esc returns empty")
   })
 })
 

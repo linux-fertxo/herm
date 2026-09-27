@@ -101,6 +101,13 @@ file in a fresh test process as well as through the aggregate suite.
 - `gw.allow$("method", fn, { match, max })` — explicitly permit bounded
   optional traffic. Do not add wildcard or catch-all handlers.
 - `gw.push({ type: "message.delta", payload: {...} })` — emit event.
+- `gw.ask$("srq-1")` — declare that the backend is waiting on a server→client
+  request id. Only an asked id accepts an answer: `respond()` returns false
+  otherwise, exactly like the real client's open-frame set. `withdraw$(id)`
+  models a backend that gave up (deadline, reconnect).
+- `gw.answers` — every answer the client sent to a server→client request, in
+  order, as `{ id, result }`. This is where clarify/approval/sudo/secret answers
+  are asserted now; the `*.respond` RPCs no longer exist.
 - `gw.last("method")` — most recent call or undefined.
 - `gw.calls` — full call log.
 
@@ -129,6 +136,11 @@ settles first then polls, and times out with a frame dump on failure.
   per `bun test` run. Do NOT write one-off repro scripts that `import
   from "../src/"` without first setting `HERMES_HOME` — they resolve
   `~/.hermes` and clobber real user data.
+- **Timezone**: run the suite through `bun run test` (`TZ=UTC bun test`).
+  `bun test` puts the JS runtime in UTC while `bun:sqlite`'s `date(...)`
+  keeps the host zone, so any test comparing a JS-computed date with a
+  SQL-bucketed one fails by a day on a non-UTC host. Setting `TZ` inside
+  `preload.ts` is too late to change it.
 - **settle() races**: two settles on mount handle the `effect → drain
   → state → second frame` sequence. Post-interaction, one `until()`
   usually suffices; chains of `act()` without settle between may batch.

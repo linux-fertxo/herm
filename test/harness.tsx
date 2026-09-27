@@ -57,11 +57,6 @@ const preset: Record<string, Handler> = {
   "session.save": () => ({ file: "/tmp/conv.json" }),
   "session.usage": () => ({}),
   "prompt.submit": () => ({ accepted: true }),
-  "approval.respond": () => ({ accepted: true }),
-  "clarify.respond": () => ({ accepted: true }),
-  "secret.respond": () => ({ accepted: true }),
-  "sudo.respond": () => ({ accepted: true }),
-  "terminal.read.respond": () => ({ accepted: true }),
   "cron.manage": () => ({ jobs: [] }),
   "toolsets.list": () => ({ toolsets: [] }),
   "tools.configure": () => ({ changed: [], enabled_toolsets: [], unknown: [] }),
@@ -84,6 +79,8 @@ export class MockGateway extends EventEmitter implements Gateway {
   private rules: Rule[] = []
   private mode: Mode
   private sub = false
+  /** Frame ids of pushed `*.request` events not yet answered. */
+  private open = new Set<string>()
   private sid = ""
   ok = false
 
@@ -119,7 +116,26 @@ export class MockGateway extends EventEmitter implements Gateway {
   }
 
   get ready() { return this.ok }
+
+  /** Answers given to server→client requests, in order. */
+  readonly answers: Array<{ id: string; result: Record<string, unknown> }> = []
+
   setSession(sid: string) { this.sid = sid }
+
+  respond(id: string, result: Record<string, unknown>): boolean {
+    if (!this.open.delete(id)) return false
+    this.answers.push({ id, result })
+    return true
+  }
+
+  /** Stands in for the backend having asked `id`: only a question the backend
+   *  is still waiting on accepts an answer, exactly like the real client's
+   *  open-frame set. */
+  ask$(id: string) { this.open.add(id); return this }
+
+  /** Stands in for the backend withdrawing an open question — a deadline on
+   *  its side, or a reconnect that lost it. */
+  withdraw$(id: string) { this.open.delete(id); return this }
 
   start() {
     this.ok = true
@@ -148,7 +164,9 @@ export class MockGateway extends EventEmitter implements Gateway {
     return {} as T
   }
 
-  /** Push an event; buffers until drained, then emits live. */
+  /** Push an event; buffers until drained, then emits live. Pushing a
+   *  `*.request` event does not make it answerable: declare that with `ask$`,
+   *  so a test can model a backend that has moved past its own question. */
   push(ev: GatewayEvent) {
     if (ev.type === "gateway.stderr") this.logs.push(ev.payload.line)
     if (this.sub) return void this.emit("event", ev)

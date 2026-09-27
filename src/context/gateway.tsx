@@ -11,6 +11,9 @@ import type { GatewayEvent } from "../context/wire"
 /** Minimal surface consumers depend on. GatewayClient satisfies this. */
 export interface Gateway extends EventEmitter {
   request<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>
+  /** Answer an open server→client request (clarify/approval/sudo/…) by frame id.
+   *  False when that request is no longer open, so a stale card can say so. */
+  respond(id: string, result: Record<string, unknown>): boolean
   setSession(sid: string): void
   start(): void
   drain(): void

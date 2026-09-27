@@ -98,19 +98,20 @@ const Approval = forwardRef<PromptCardHandle, {
 
   const prompt = mkApproval(p.req)
 
+  // The answer is a JSON-RPC *response* to the frame the backend asked on, so it
+  // needs that frame's own id; the old `approval.respond` RPC no longer exists.
   const send = (c: Choice) => {
     if (done.current) return
     done.current = true
     setNote("")
-    void gw.request("approval.respond", { choice: RESPOND[c] })
-      .then(() => {
-        if (c === "never") remember(prompt)
-        p.onAnswer(LABELS[c], c !== "deny")
-      })
-      .catch((e: Error) => {
-        done.current = false
-        setNote(e.message)
-      })
+    const all = c === "never"
+    if (!gw.respond(p.req.request_id, all ? { choice: RESPOND[c], all } : { choice: RESPOND[c] })) {
+      done.current = false
+      setNote("this request is no longer open")
+      return
+    }
+    if (all) remember(prompt)
+    p.onAnswer(LABELS[c], c !== "deny")
   }
 
   const steer = (text: string) => {
@@ -217,7 +218,14 @@ const Clarify = forwardRef<PromptCardHandle, {
 }>((p, ref) => {
   const theme = useTheme().theme
   const gw = useGateway()
-  const choices = p.req.choices ?? []
+  // A batch arrives as `questions` with no top-level `question`; walk it one
+  // entry at a time and answer the frame once with the whole `answers` set —
+  // the backend locks answers per question and settles on the last one.
+  const batch = useRef(p.req.questions ?? []).current
+  const picked = useRef<Record<string, string>>({})
+  const [step, setStep] = useState(0)
+  const at = batch[Math.min(step, batch.length - 1)]
+  const choices = (at?.choices ?? p.req.choices) ?? []
   const [sel, setSel] = useState(0)
   const [typing, setTyping] = useState(choices.length === 0)
   const [custom, setCustom] = useState("")
@@ -226,15 +234,47 @@ const Clarify = forwardRef<PromptCardHandle, {
 
   const send = (answer: string) => {
     if (done.current) return
+    if (!at) {
+      done.current = true
+      setErr("")
+      if (!gw.respond(p.req.request_id, { answer })) {
+        done.current = false
+        setErr("this request is no longer open")
+        return
+      }
+      p.onAnswer(answer || "(cancelled)", answer !== "")
+      return
+    }
+    picked.current[at.qid] = answer
+    if (step + 1 < batch.length) {
+      setStep(step + 1)
+      setSel(0)
+      setCustom("")
+      setTyping((batch[step + 1]?.choices ?? []).length === 0)
+      return
+    }
     done.current = true
     setErr("")
-    void gw.request("clarify.respond", {
-      request_id: p.req.request_id, answer,
-    }).then(() => p.onAnswer(answer || "(cancelled)", answer !== ""))
-      .catch((e: Error) => {
-        done.current = false
-        setErr(e.message)
-      })
+    if (!gw.respond(p.req.request_id, { answers: picked.current })) {
+      done.current = false
+      setErr("this request is no longer open")
+      return
+    }
+    p.onAnswer(`${batch.length} answered`, true)
+  }
+
+  // A batch is withdrawn as a whole: the backend reads a result carrying
+  // neither `answer` nor `answers` as cancel-all.
+  const cancel = () => {
+    if (done.current) return
+    if (!at) return send("")
+    done.current = true
+    if (!gw.respond(p.req.request_id, {})) {
+      done.current = false
+      setErr("this request is no longer open")
+      return
+    }
+    p.onAnswer("(cancelled)", false)
   }
 
   useImperativeHandle(ref, () => ({
@@ -245,11 +285,11 @@ const Clarify = forwardRef<PromptCardHandle, {
         // <input> handles text; we only intercept cancel-back.
         if (key.name === "escape") {
           if (choices.length) { setTyping(false); return true }
-          send(""); return true
+          cancel(); return true
         }
         return false
       }
-      if (key.name === "escape") { send(""); return true }
+      if (key.name === "escape") { cancel(); return true }
       if (key.name === "up")   { setSel(s => Math.max(0, s - 1)); return true }
       if (key.name === "down") { setSel(s => Math.min(choices.length, s + 1)); return true }
       if (key.name === "return") {
@@ -262,13 +302,16 @@ const Clarify = forwardRef<PromptCardHandle, {
       if (n !== null && n >= 1 && n <= choices.length) { send(choices[n - 1]); return true }
       return false
     },
-  }), [typing, sel, choices])
+  }), [typing, sel, choices, step])
 
   const head = (
     <box minHeight={1}>
       <text wrapMode="word">
         <span fg={theme.accent}><strong>ask </strong></span>
-        <span fg={theme.text}><strong>{p.req.question}</strong></span>
+        <span fg={theme.text}><strong>{at ? at.question : p.req.question ?? ""}</strong></span>
+        {batch.length > 1
+          ? <span fg={theme.textMuted}>{`  ${step + 1}/${batch.length}`}</span>
+          : null}
       </text>
     </box>
   )
@@ -316,7 +359,8 @@ const Clarify = forwardRef<PromptCardHandle, {
 const Masked = forwardRef<PromptCardHandle, {
   title: string
   note: string
-  onSubmit: (v: string) => Promise<unknown>
+  /** Answers the request frame; false when it is no longer open. */
+  onSubmit: (v: string) => boolean
   onAnswer: Answer
 }>((p, ref) => {
   const theme = useTheme().theme
@@ -328,12 +372,12 @@ const Masked = forwardRef<PromptCardHandle, {
     if (done.current) return
     done.current = true
     setErr("")
-    void p.onSubmit(v)
-      .then(() => p.onAnswer(v ? "(provided)" : "(cancelled)", v !== ""))
-      .catch((e: Error) => {
-        done.current = false
-        setErr(e.message)
-      })
+    if (!p.onSubmit(v)) {
+      done.current = false
+      setErr("this request is no longer open")
+      return
+    }
+    p.onAnswer(v ? "(provided)" : "(cancelled)", v !== "")
   }
 
   useImperativeHandle(ref, () => ({
@@ -369,7 +413,8 @@ function cap(s: string, n = 160): string {
 function question(part: PromptPart): string {
   const a = part.answered?.question
   if (a) return a
-  if (part.req.variant === "clarify") return part.req.question
+  if (part.req.variant === "clarify")
+    return part.req.question ?? part.req.questions?.[0]?.question ?? "Question"
   if (part.req.variant === "approval") return mkApproval(part.req).question
   if (part.req.variant === "sudo") return "Sudo required"
   if (part.req.variant === "secret") return part.req.env_var ? `Secret: ${part.req.env_var}` : "Secret required"
@@ -409,12 +454,12 @@ const TerminalRead = forwardRef<PromptCardHandle, {
     if (done.current) return
     done.current = true
     setErr("")
-    void gw.request("terminal.read.respond", { request_id: p.req.request_id, text: "" })
-      .then(() => p.onAnswer("(unavailable)", false))
-      .catch((e: Error) => {
-        done.current = false
-        setErr(e.message)
-      })
+    if (!gw.respond(p.req.request_id, { value: "" })) {
+      done.current = false
+      setErr("this request is no longer open")
+      return
+    }
+    p.onAnswer("(unavailable)", false)
   }
 
   useImperativeHandle(ref, () => ({
@@ -472,15 +517,13 @@ export const PromptCard = memo(forwardRef<PromptCardHandle, {
   if (req.variant === "sudo")
     return <Masked ref={ref} title="🔒 Sudo required"
                    note="Enter your password to elevate privileges."
-                   onSubmit={v => gw.request("sudo.respond",
-                     { request_id: req.request_id, password: v })}
+                   onSubmit={v => gw.respond(req.request_id, { value: v })}
                    onAnswer={answer} />
   if (req.variant === "terminal-read")
     return <TerminalRead ref={ref} req={req} onAnswer={answer} />
   return <Masked ref={ref} title={`🔑 Secret: ${req.env_var}`}
                  note={req.prompt}
-                 onSubmit={v => gw.request("secret.respond",
-                   { request_id: req.request_id, value: v })}
+                 onSubmit={v => gw.respond(req.request_id, { value: v })}
                  onAnswer={answer} />
 }))
 

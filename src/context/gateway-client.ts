@@ -20,6 +20,33 @@ const WS_CLOSING = 2
 const WS_CLOSED = 3
 const decoder = new TextDecoder()
 
+// JSON-RPC error for a question this client has no surface to render.
+const NO_HANDLER = -32601
+
+// Server→client request methods the transcript renders. Everything else (tour,
+// vault prompts, preview reads, window reads) has no surface here, and a
+// backend that never gets an answer waits out its full deadline — clarify's is
+// 3600s — so the rest are declined immediately instead of left hanging.
+const RENDERED = new Set(["clarify", "approval", "sudo", "secret", "terminal.read"])
+
+const EVENT_OF: Record<string, string> = {
+  clarify: "clarify.request",
+  approval: "approval.request",
+  sudo: "sudo.request",
+  secret: "secret.request",
+  "terminal.read": "terminal.read.request",
+}
+
+/** Hermes sends a blocking question as a server→client request; the transcript
+ *  renders the `*.request` event that used to carry it. Translate one to the
+ *  other, keeping the frame id as `request_id` because that — not a follow-up
+ *  RPC — is what routes the answer back to the backend that asked. */
+function ask(id: string, method: string, params: Record<string, unknown>): GatewayEvent | null {
+  const type = EVENT_OF[method]
+  if (!type) return null
+  return { type, payload: { request_id: id, ...params } } as GatewayEvent
+}
+
 export type GatewayEventSource = "stdio" | "websocket" | "control" | "internal"
 
 type Diag = {
@@ -193,6 +220,8 @@ export class GatewayClient extends EventEmitter {
   private logs: string[] = []
   private unknown = new Map<string, Diag>()
   private pending = new Map<string, Pending>()
+  /** Frame ids of server→client requests rendered but not yet answered. */
+  private open = new Set<string>()
   private buf: GatewayEvent[] = []
   private contract = backend.backendContract(null)
   private declared = loadContract(hermesAgentRoot())
@@ -208,9 +237,18 @@ export class GatewayClient extends EventEmitter {
     if (ev.type === "gateway.ready") {
       this.ok = true
       if (this.timer) { clearTimeout(this.timer); this.timer = null }
+      this.advertise()
     }
     if (this.sub) return void this.emit("event", ev)
     this.buf.push(ev)
+  }
+
+  /** Declare that this client answers server→client requests. Without it the
+   *  backend refuses to write the frame at all (`server_requests.send` returns
+   *  None for an unadvertised transport), so clarify and approval self-skip
+   *  silently and the agent answers its own questions. */
+  private advertise() {
+    void this.request("client.capabilities", { server_requests: true }).catch(() => {})
   }
 
   private log(line: string): number {
@@ -262,6 +300,7 @@ export class GatewayClient extends EventEmitter {
         const err = msg.error as { message?: unknown }
         p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
       } else {
+        this.replay(res, source)
         p.resolve(res)
       }
       return
@@ -273,7 +312,54 @@ export class GatewayClient extends EventEmitter {
         if (ev.type === "session.info") this.observe(ev.payload)
         this.push(ev, source)
       }
+      return
     }
+
+    // A string id plus a method is the backend asking THIS client a question.
+    // A response to one of ours never carries a method, so it cannot land here.
+    if (typeof id === "string" && typeof msg.method === "string")
+      this.deliver(id, msg.method, rec(msg.params) ?? {}, source)
+  }
+
+  private deliver(id: string, method: string, params: Record<string, unknown>, source: GatewayEventSource) {
+    if (!RENDERED.has(method)) {
+      this.log(`[server request] declined ${method} (${id})`)
+      return void this.reply(id, { error: { code: NO_HANDLER, message: `no handler for server request: ${method}` } })
+    }
+    this.open.add(id)
+    const ev = ask(id, method, params)
+    if (ev) this.push(ev, source)
+  }
+
+  /** A reconnect replay returns the questions still waiting for an answer, so a
+   *  card survives a dropped socket instead of becoming unanswerable. */
+  private replay(res: unknown, source: GatewayEventSource) {
+    const items = rec(res)?.open_requests
+    if (!Array.isArray(items)) return
+    for (const item of items) {
+      const req = rec(item)
+      const id = req?.id
+      const method = req?.method
+      if (typeof id === "string" && typeof method === "string")
+        this.deliver(id, method, rec(req?.params) ?? {}, source)
+    }
+  }
+
+  /** Answer an open server→client request by frame id. False when nothing is
+   *  open under that id: already answered, or withdrawn by the backend. */
+  respond(id: string, result: Record<string, unknown>): boolean {
+    if (!this.open.delete(id)) return false
+    this.reply(id, { result })
+    return true
+  }
+
+  private reply(id: string, body: Record<string, unknown>) {
+    const text = JSON.stringify({ jsonrpc: "2.0", id, ...body })
+    const ws = this.ws
+    if (ws?.readyState === WS_OPEN) return void ws.send(text)
+    const stdin = this.proc?.stdin
+    if (!stdin || typeof stdin === "number") return void this.log(`[server request] no transport to answer ${id}`)
+    ;(stdin as { write(data: string): number }).write(text + "\n")
   }
 
   private fail(err: Error) {

@@ -1,6 +1,6 @@
 // Typed events and RPC responses for the tui_gateway JSON-RPC protocol.
 
-import type { Usage } from "../types/message"
+import type { ClarifyQuestion, Usage } from "../types/message"
 
 export type NotificationShowPayload = {
   text: string
@@ -52,9 +52,14 @@ export type GatewayEvent = ({
   | { type: "tool.progress"; payload: { name?: string; preview?: string } }
   | { type: "tool.generating"; payload: { name?: string } }
   | { type: "tool.complete"; payload: { tool_id: string; name?: string; summary?: string; error?: string; inline_diff?: string; duration_s?: number; result_text?: string; todos?: unknown[] } }
-  | { type: "clarify.request"; payload: { request_id: string; question: string; choices: string[] | null } }
-  | { type: "approval.request"; payload: { command: string; description: string; pattern_keys?: string[] } }
-  | { type: "sudo.request"; payload: { request_id: string } }
+  // Server→client requests (contract v7+): the backend asks the client a question
+  // and waits for a response frame carrying the request's own id, which is the
+  // `request_id` the transcript routes its answer by. Payloads are the wire
+  // params verbatim, so optional fields stay optional — a batch clarify carries
+  // `questions` and no top-level `question`.
+  | { type: "clarify.request"; payload: { request_id: string; question?: string; choices?: string[] | null; multi_select?: boolean; questions?: ClarifyQuestion[] } }
+  | { type: "approval.request"; payload: { request_id: string; command: string; description: string; choices?: string[]; pattern_keys?: string[]; tool_name?: string; smart_denied?: boolean } }
+  | { type: "sudo.request"; payload: { request_id: string; command?: string } }
   | { type: "secret.request"; payload: { request_id: string; prompt: string; env_var: string; metadata?: unknown } }
   | { type: "terminal.read.request"; payload: { request_id: string; start?: number; count?: number } }
   | { type: "background.complete"; payload: { task_id: string; text: string } }

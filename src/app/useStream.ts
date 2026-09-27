@@ -217,12 +217,10 @@ export function useStream(c: Ctx) {
       onStatus: (text) => x.setStatus(text),
       onSessionTitle: retitle,
       onApprovalRemembered: (fallback) => {
-        const sid = x.sidRef.current
-        void gw.request("approval.respond", { choice: "always" }).catch((err: Error) => {
-          if (ctx.current.sidRef.current !== sid) return
-          x.dispatch(fallback)
-          toast.show({ variant: "error", message: err.message })
-        })
+        const id = fallback.req.variant === "approval" ? fallback.req.request_id : ""
+        if (gw.respond(id, { choice: "always", all: true })) return
+        x.dispatch(fallback)
+        toast.show({ variant: "error", message: "this approval is no longer open" })
       },
       onSkin: (s) => x.setSkin(deriveSkin(s)),
       onVoiceStatus: x.onVoiceStatus,

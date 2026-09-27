@@ -202,19 +202,17 @@ export function mapEvent(ev: GatewayEvent, side: Side): Action | null {
 
     case "approval.request": {
       const req: Extract<PromptReq, { variant: "approval" }> = { variant: "approval", ...ev.payload }
+      // The question's own frame id is the part id, so `prompt.answered` updates
+      // the card that was actually asked and the answer routes back by the same id.
       const fallback: Extract<Action, { kind: "prompt" }> = {
         kind: "prompt",
-        id: `approval-${pid()}`,
+        id: req.request_id,
         req,
       }
       if (shouldRemember(req)) {
         side.onApprovalRemembered?.(fallback)
         return null
       }
-      // Approval has no request_id upstream — the gateway's approval
-      // responder is a single pending slot. Mint a unique part id so
-      // multiple approvals in one turn don't alias each other when
-      // prompt.answered updates by id.
       return fallback
     }
 

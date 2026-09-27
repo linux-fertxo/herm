@@ -506,10 +506,13 @@ describe("app", () => {
     await act(async () => { await t.keys.typeText("go") })
     act(() => t.keys.pressEnter())
     act(() => t.gw.push({ type: "message.start" }))
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm -rf /", description: "delete everything" },
-    }))
+    act(() => {
+      t.gw.ask$("srq-i1")
+      t.gw.push({
+        type: "approval.request",
+        payload: { request_id: "srq-i1", command: "rm -rf /", description: "delete everything" },
+      })
+    })
     await until(t, () => t.frame().includes("Permission required"))
 
     // Card is in the transcript, not a dialog: no backdrop box.
@@ -520,17 +523,20 @@ describe("app", () => {
     // as the agent resumes, occluding the outcome row — assert via
     // wire + pending-gone, not frame text).
     await act(async () => { await t.keys.typeText("1") })
-    await until(t, () => t.gw.last("approval.respond")?.params.choice === "once")
+    await until(t, () => t.gw.answers.at(-1)?.result.choice === "once")
     await until(t, () => !t.frame().includes("Permission required"))
 
     // Second approval in the same turn → fresh card; Esc denies it.
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "cat /etc/shadow", description: "" },
-    }))
+    act(() => {
+      t.gw.ask$("srq-i2")
+      t.gw.push({
+        type: "approval.request",
+        payload: { request_id: "srq-i2", command: "cat /etc/shadow", description: "" },
+      })
+    })
     await until(t, () => t.frame().includes("Permission required"))
     act(() => t.keys.pressEscape())
-    await until(t, () => t.gw.last("approval.respond")?.params.choice === "deny")
+    await until(t, () => t.gw.answers.at(-1)?.result.choice === "deny")
     await until(t, () => !t.frame().includes("Permission required"))
 
     // Close the cloud; both outcome rows persist in the transcript.
@@ -550,7 +556,7 @@ describe("app", () => {
     act(() => t.gw.push({ type: "message.start" }))
     act(() => t.gw.push({
       type: "approval.request",
-      payload: { command: "rm -rf /tmp/x", description: "delete temp tree" },
+      payload: { request_id: "srq-i3", command: "rm -rf /tmp/x", description: "delete temp tree" },
     }))
     await until(t, () => t.frame().includes("Permission required"))
 
@@ -562,7 +568,7 @@ describe("app", () => {
 
     act(() => t.keys.pressKey("1"))
     await t.settle()
-    expect(t.gw.last("approval.respond")).toBeUndefined()
+    expect(t.gw.answers).toEqual([])
     t.destroy()
   })
 
@@ -575,10 +581,13 @@ describe("app", () => {
     act(() => t.keys.pressEnter())
     act(() => t.gw.push({ type: "message.start" }))
     await until(t, () => t.frame().includes("Type to queue"))
-    act(() => t.gw.push({
-      type: "approval.request",
-      payload: { command: "rm x", description: "" },
-    }))
+    act(() => {
+      t.gw.ask$("srq-i4")
+      t.gw.push({
+        type: "approval.request",
+        payload: { request_id: "srq-i4", command: "rm x", description: "" },
+      })
+    })
     await until(t, () => t.frame().includes("Permission required"))
 
     // Unlike the old dialog, tab-nav is NOT blocked — the prompt is
@@ -591,7 +600,7 @@ describe("app", () => {
     // consumed it and stopPropagation'd).
     act(() => t.keys.pressEscape())
     await until(t, () => !t.frame().includes("Permission required"))
-    expect(t.gw.last("approval.respond")?.params.choice).toBe("deny")
+    expect(t.gw.answers.at(-1)?.result.choice).toBe("deny")
     expect(t.gw.last("session.interrupt")).toBeUndefined()
 
     // Now the prompt is gone; next two Escapes arm + fire normally.
@@ -610,17 +619,20 @@ describe("app", () => {
     await act(async () => { await t.keys.typeText("go") })
     act(() => t.keys.pressEnter())
     act(() => t.gw.push({ type: "message.start" }))
-    act(() => t.gw.push({
-      type: "clarify.request",
-      payload: { request_id: "c1", question: "which one?", choices: ["red", "blue"] },
-    }))
+    act(() => {
+      t.gw.ask$("c1")
+      t.gw.push({
+        type: "clarify.request",
+        payload: { request_id: "c1", question: "which one?", choices: ["red", "blue"] },
+      })
+    })
     await until(t, () => t.frame().includes("which one?"))
     expect(t.frame()).toContain("1. red")
     expect(t.frame()).toContain("2. blue")
 
     await act(async () => { await t.keys.typeText("2") })
-    await until(t, () => t.gw.last("clarify.respond") !== undefined)
-    expect(t.gw.last("clarify.respond")?.params).toMatchObject({ request_id: "c1", answer: "blue" })
+    await until(t, () => t.gw.answers.length > 0)
+    expect(t.gw.answers).toEqual([{ id: "c1", result: { answer: "blue" } }])
     // Outcome persists after turn ends with question context.
     act(() => t.gw.push({ type: "message.complete", payload: { text: "ok", usage: { input: 0, output: 0, total: 0 } } }))
     await until(t, () => t.frame().includes("blue"))
@@ -634,10 +646,13 @@ describe("app", () => {
     await act(async () => { await t.keys.typeText("go") })
     act(() => t.keys.pressEnter())
     act(() => t.gw.push({ type: "message.start" }))
-    act(() => t.gw.push({
-      type: "secret.request",
-      payload: { request_id: "s1", prompt: "enter key", env_var: "API_KEY" },
-    }))
+    act(() => {
+      t.gw.ask$("s1")
+      t.gw.push({
+        type: "secret.request",
+        payload: { request_id: "s1", prompt: "enter key", env_var: "API_KEY" },
+      })
+    })
     await until(t, () => t.frame().includes("Secret: API_KEY"))
 
     // Type a secret — it must NOT appear in the frame; bullets do.
@@ -647,8 +662,8 @@ describe("app", () => {
     expect(t.frame()).toContain("•••••••")
 
     act(() => t.keys.pressEnter())
-    await until(t, () => t.gw.last("secret.respond") !== undefined)
-    expect(t.gw.last("secret.respond")?.params).toMatchObject({ request_id: "s1", value: "hunter2" })
+    await until(t, () => t.gw.answers.length > 0)
+    expect(t.gw.answers).toEqual([{ id: "s1", result: { value: "hunter2" } }])
     act(() => t.gw.push({ type: "message.complete", payload: { text: "", usage: { input: 0, output: 0, total: 0 } } }))
     await until(t, () => t.frame().includes("(provided)"))
     // Composer refocuses once the masked prompt clears.

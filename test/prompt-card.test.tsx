@@ -4,20 +4,21 @@ import { mountNode, until, MockGateway } from "./harness"
 import { PromptCard, pending, type PromptCardHandle } from "../src/components/chat/PromptCard"
 import type { PromptPart, Part } from "../src/types/message"
 
+let an = 0
 const approval = (over: Partial<Extract<PromptPart["req"], { variant: "approval" }>> = {}): PromptPart => ({
   type: "prompt", id: "a1", variant: "approval",
-  req: { variant: "approval", command: "rm -rf /tmp/x", description: "recursive rm", ...over },
+  req: { variant: "approval", request_id: `srq-a${++an}`, command: "rm -rf /tmp/x", description: "recursive rm", ...over },
 })
 
 describe("PromptCard.Approval", () => {
-  test("renders command + pattern_keys; 1..4/Enter/Esc dispatch approval.respond", async () => {
+  test("renders command + pattern_keys; 1..4/Enter/Esc answer the request frame", async () => {
     const gw = new MockGateway(); gw.ok = true
     const ref = createRef<PromptCardHandle>()
     const answers: string[] = []
+    const part = approval({ pattern_keys: ["rm_recursive", "tmp_write"] })
+    gw.ask$(part.req.request_id)
     await using t = await mountNode(
-      <PromptCard ref={ref}
-        part={approval({ pattern_keys: ["rm_recursive", "tmp_write"] })}
-        onAnswer={(_, label) => answers.push(label)} />,
+      <PromptCard ref={ref} part={part} onAnswer={(_, label) => answers.push(label)} />,
       { gw },
     )
     const f = t.frame()
@@ -30,25 +31,27 @@ describe("PromptCard.Approval", () => {
 
     act(() => ref.current!.feed({ name: "2" } as never))
     await t.settle()
-    expect(gw.last("approval.respond")?.params.choice).toBe("session")
+    expect(gw.answers).toEqual([{ id: part.req.request_id, result: { choice: "session" } }])
     expect(answers).toEqual(["Allow this session"])
     // second send is ignored (done latch)
     act(() => ref.current!.feed({ name: "4" } as never))
     await t.settle()
-    expect(gw.calls.filter(c => c.method === "approval.respond").length).toBe(1)
+    expect(gw.answers).toHaveLength(1)
   })
 
   test("←/→ wraps, Enter sends selection", async () => {
     const gw = new MockGateway(); gw.ok = true
     const ref = createRef<PromptCardHandle>()
+    const part = approval()
+    gw.ask$(part.req.request_id)
     await using t = await mountNode(
-      <PromptCard ref={ref} part={approval()} onAnswer={() => {}} />,
+      <PromptCard ref={ref} part={part} onAnswer={() => {}} />,
       { gw },
     )
     act(() => ref.current!.feed({ name: "left" } as never))
     act(() => ref.current!.feed({ name: "return" } as never))
     await t.settle()
-    expect(gw.last("approval.respond")?.params.choice).toBe("deny")
+    expect(gw.answers).toEqual([{ id: part.req.request_id, result: { choice: "deny" } }])
   })
 
   test("steer opens input, submits session.steer, and keeps approval pending", async () => {
@@ -68,13 +71,13 @@ describe("PromptCard.Approval", () => {
     act(() => t.keys.pressEnter())
     await until(t, () => t.gw.last("session.steer")?.params.text === "use ls first")
 
-    expect(gw.last("approval.respond")).toBeUndefined()
+    expect(gw.answers).toEqual([])
     expect(answers).toEqual([])
     expect(t.frame()).toContain("steer sent")
     expect(t.frame()).toContain("Deny")
   })
 
-  test("steer input escape returns to approval without RPC", async () => {
+  test("steer input escape returns to approval without answering", async () => {
     const gw = new MockGateway(); gw.ok = true
     const ref = createRef<PromptCardHandle>()
     await using t = await mountNode(
@@ -88,7 +91,7 @@ describe("PromptCard.Approval", () => {
     await until(t, () => t.frame().includes("s steer"))
 
     expect(gw.last("session.steer")).toBeUndefined()
-    expect(gw.last("approval.respond")).toBeUndefined()
+    expect(gw.answers).toEqual([])
   })
 
 
@@ -123,6 +126,7 @@ describe("PromptCard.Clarify", () => {
       type: "prompt", id: "c1", variant: "clarify",
       req: { variant: "clarify", request_id: "r1", question: "which?", choices: ["A", "B"] },
     }
+    gw.ask$("r1")
     await using t = await mountNode(
       <PromptCard ref={ref} part={part} onAnswer={() => {}} />, { gw },
     )
@@ -131,7 +135,63 @@ describe("PromptCard.Clarify", () => {
     act(() => ref.current!.feed({ name: "down" } as never))
     act(() => ref.current!.feed({ name: "return" } as never))
     await t.settle()
-    expect(gw.last("clarify.respond")?.params).toMatchObject({ request_id: "r1", answer: "B" })
+    expect(gw.answers).toEqual([{ id: "r1", result: { answer: "B" } }])
+  })
+
+  test("batch: one answer frame carries the whole qid→answer set", async () => {
+    const gw = new MockGateway(); gw.ok = true
+    const ref = createRef<PromptCardHandle>()
+    const part: PromptPart = {
+      type: "prompt", id: "c2", variant: "clarify",
+      req: {
+        variant: "clarify", request_id: "batch-1",
+        questions: [
+          { qid: "q1", question: "first?", choices: ["a", "b"] },
+          { qid: "q2", question: "second?", choices: ["x", "y"] },
+        ],
+      },
+    }
+    gw.ask$("batch-1")
+    await using t = await mountNode(
+      <PromptCard ref={ref} part={part} onAnswer={() => {}} />, { gw },
+    )
+    expect(t.frame()).toContain("first?")
+    expect(t.frame()).toContain("1/2")
+
+    // Walking the batch must not answer anything until the last question.
+    act(() => ref.current!.feed({ name: "down" } as never))
+    act(() => ref.current!.feed({ name: "return" } as never))
+    await t.settle()
+    expect(gw.answers).toEqual([])
+    expect(t.frame()).toContain("second?")
+    expect(t.frame()).toContain("2/2")
+
+    act(() => ref.current!.feed({ name: "return" } as never))
+    await t.settle()
+    expect(gw.answers).toEqual([{ id: "batch-1", result: { answers: { q1: "b", q2: "x" } } }])
+  })
+
+  test("batch: Esc withdraws the whole question set", async () => {
+    const gw = new MockGateway(); gw.ok = true
+    const ref = createRef<PromptCardHandle>()
+    const part: PromptPart = {
+      type: "prompt", id: "c3", variant: "clarify",
+      req: {
+        variant: "clarify", request_id: "batch-2",
+        questions: [
+          { qid: "q1", question: "first?", choices: ["a", "b"] },
+          { qid: "q2", question: "second?", choices: ["x", "y"] },
+        ],
+      },
+    }
+    gw.ask$("batch-2")
+    await using t = await mountNode(
+      <PromptCard ref={ref} part={part} onAnswer={() => {}} />, { gw },
+    )
+    act(() => ref.current!.feed({ name: "escape" } as never))
+    await t.settle()
+    // An empty result is what the backend reads as cancel-all.
+    expect(gw.answers).toEqual([{ id: "batch-2", result: {} }])
   })
 
   test("answered outcomes keep question and selected/freeform answers visible", async () => {

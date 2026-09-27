@@ -50,10 +50,19 @@ export type PromptPart = {
   answered?: { label: string; ok: boolean; at: number; question?: string }
 }
 
+/** One entry of a batch clarify. The backend locks answers per question
+ *  (`clarify.lock`); a response carries the whole `answers` set. */
+export type ClarifyQuestion = {
+  qid: string
+  question: string
+  choices?: string[] | null
+  multi_select?: boolean
+}
+
 export type PromptReq =
-  | { variant: "approval"; command: string; description: string; pattern_keys?: string[] }
-  | { variant: "clarify"; request_id: string; question: string; choices: string[] | null }
-  | { variant: "sudo"; request_id: string }
+  | { variant: "approval"; request_id: string; command: string; description: string; choices?: string[]; pattern_keys?: string[]; smart_denied?: boolean }
+  | { variant: "clarify"; request_id: string; question?: string; choices?: string[] | null; multi_select?: boolean; questions?: ClarifyQuestion[] }
+  | { variant: "sudo"; request_id: string; command?: string }
   | { variant: "secret"; request_id: string; prompt: string; env_var: string }
   | { variant: "terminal-read"; request_id: string; start?: number; count?: number }
 

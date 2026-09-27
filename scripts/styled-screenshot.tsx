@@ -258,7 +258,7 @@ async function approvalPrompt(ctx: CaptureContext): Promise<Harness> {
   ctx.act(() => gw.push({ type: "message.start" }))
   ctx.act(() => gw.push({
     type: "approval.request",
-    payload: { command: "rm -rf /tmp/demo", description: "delete temp demo files" },
+    payload: { request_id: "srq-i1", command: "rm -rf /tmp/demo", description: "delete temp demo files" },
   }))
   await ctx.until(t, () => t.frame().includes("Permission required") && t.frame().includes("rm -rf /tmp/demo"))
   return t

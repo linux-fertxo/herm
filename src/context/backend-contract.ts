@@ -32,6 +32,7 @@ const BOOT = new Set([
 
 const READ = new Set([
   "agents.list",
+  "client.capabilities",
   "commands.catalog",
   "complete.path",
   "complete.slash",
