@@ -39,7 +39,7 @@
     "current-hermes-canary": "bun scripts/current-hermes-canary.ts",
     "build": "bun scripts/build.ts",
     "start": "bun run dist/index.js",
-    "test": "TZ=UTC bun test",
+    "test": "TZ=UTC TMPDIR=/tmp bun test",
     "test:check": "bun scripts/check-tests.ts",
     "test:check:strict": "bun scripts/check-tests.ts --strict",
     "test:check:changed": "bun scripts/check-tests.ts --changed",

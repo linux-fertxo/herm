@@ -799,11 +799,13 @@ export const HERMES_MANIFEST = {
       },
       "diff": {
         "additions": [
+          "approval.respond",
           "billing.auto_reload",
           "billing.charge",
           "billing.charge_status",
           "billing.state",
           "billing.step_up",
+          "clarify.respond",
           "command.resolve",
           "config.show",
           "file.attach",
@@ -852,6 +854,7 @@ export const HERMES_MANIFEST = {
           "projects.set_primary",
           "projects.tree",
           "projects.update",
+          "secret.respond",
           "session.cwd.set",
           "session.most_recent",
           "session.redirect",
@@ -863,7 +866,9 @@ export const HERMES_MANIFEST = {
           "subscription.resume",
           "subscription.state",
           "subscription.upgrade",
+          "sudo.respond",
           "system.battery",
+          "terminal.read.respond",
           "terminal.resize",
           "tools.list",
           "tools.show",
@@ -873,7 +878,9 @@ export const HERMES_MANIFEST = {
           "voice.toggle",
           "voice.tts"
         ],
-        "removals": [],
+        "removals": [
+          "client.capabilities"
+        ],
         "likelyRenames": []
       }
     },
