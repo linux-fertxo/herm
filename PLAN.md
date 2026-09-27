@@ -172,6 +172,13 @@ aprobaciones dependen de `approvals.mode`; clarify no.
 - 1-3 ✅ (sesión 2) · **4 ✅** (implementada + verificada en vivo) · **5 ✅** (purga
   hecha; `*.respond` fuera de src y harness) · **6 ✅** (manifiesto regenerado; los 3
   checks pasan contra el pin) · **7 ✅** (`bunx tsc --noEmit` limpio, `bun run build`
-  OK, suite **1445 pass / 0 fail**) · **8 ⏳**: queda espejo a `gitea.fertxo.com` e
-  instalar como `herm` (sustituir el global `herm-tui@1.10.0`).
+  OK, suite **1445 pass / 0 fail**) · **8 ✅**:
+  - **Espejo Gitea**: repo privado `fertxo/herm` creado por API y `git push gitea --all`
+    (`dev` + `fix/gateway-contract-gate`), verificado contra la API: las dos puntas
+    coinciden con las locales. Remoto: `git push gitea` (o `--all`). La API necesita
+    `GITEA_TOKEN` (en `~/.hermes/.env`, scheme `token`); la credencial de
+    `~/.git-credentials` solo vale para git, no para la API.
+  - **Instalado como `herm`**: `~/.local/bin/herm -> ~/dev/herm/bin/herm.cjs` (que
+    ejecuta `dist/index.js`). `herm-tui@1.10.0` global desinstalado. Queda un
+    `herm-tui` **local** declarado en `~/package.json` (inerto, no está en el PATH).
 
