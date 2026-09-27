@@ -7,6 +7,7 @@ import { resolve, delimiter } from "path"
 import { existsSync } from "fs"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
 import { backend } from "./backend-contract"
+import { loadContract } from "./gateway-contract"
 import { encode } from "../utils/unicode"
 
 const LOG_MAX = 200
@@ -194,6 +195,7 @@ export class GatewayClient extends EventEmitter {
   private pending = new Map<string, Pending>()
   private buf: GatewayEvent[] = []
   private contract = backend.backendContract(null)
+  private declared = loadContract(hermesAgentRoot())
   private exit: number | null | undefined
   private ok = false
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -515,7 +517,7 @@ export class GatewayClient extends EventEmitter {
 
     const rid = `r${++this.id}`
     const writer = stdin as { write(data: string | Uint8Array): number }
-    const merged = this.sid && params.session_id === undefined
+    const merged = this.sid && params.session_id === undefined && this.declared.session.has(method)
       ? { session_id: this.sid, ...params }
       : params
 
@@ -553,7 +555,7 @@ export class GatewayClient extends EventEmitter {
       this.start()
 
     const rid = `r${++this.id}`
-    const merged = this.sid && params.session_id === undefined
+    const merged = this.sid && params.session_id === undefined && this.declared.session.has(method)
       ? { session_id: this.sid, ...params }
       : params
 
