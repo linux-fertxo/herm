@@ -18,6 +18,12 @@ process.env.HERM_IO_INLINE = "1"
 process.env.CONTROL = ""
 process.env.PERF = ""
 
+// React publishes `act` in its development build only. A NODE_ENV=production
+// inherited from the caller (a production TUI shell, a runner that exports it)
+// makes every component file die at import with "Export named 'act' not found",
+// which reports as ~99 broken files instead of one broken environment.
+process.env.NODE_ENV = "test"
+
 // OpenTUI's own Markdown.test.ts pattern: one TreeSitterClient for the
 // whole suite, created in beforeAll, destroyed in afterAll. Under bun
 // test every t.destroy() drops rendererTracker's set to 0, which
