@@ -18,6 +18,7 @@ memory, and kanban without leaving the terminal.
 > This fork restores Herm against current Hermes.
 > **Do not install the npm `herm-tui` package for this fork** — that is upstream's frozen
 > build. See [what this fork changes](#what-this-fork-changes).
+> Maintained by [`@linux-fertxo`](https://github.com/linux-fertxo).
 
 ## Why Herm
 
@@ -62,12 +63,10 @@ herm
 ```
 
 Or let Bun install it globally from the repository, running `src/index.tsx` from
-source. **Pin the ref**: the contract-8 fixes live on
-`fix/gateway-contract-gate`, while the fork's `dev` is still the pre-fix upstream
-head.
+source:
 
 ```bash
-bun add -g github:linux-fertxo/herm#fix/gateway-contract-gate
+bun add -g github:linux-fertxo/herm
 ```
 
 Run it:

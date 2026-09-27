@@ -177,8 +177,14 @@ aprobaciones dependen de `approvals.mode`; clarify no.
     (`dev` + `fix/gateway-contract-gate`), verificado contra la API: las dos puntas
     coinciden con las locales. Remoto: `git push gitea` (o `--all`). La API necesita
     `GITEA_TOKEN` (en `~/.hermes/.env`, scheme `token`); la credencial de
-    `~/.git-credentials` solo vale para git, no para la API.
+    `~/.git-credentials` solo vale para git, no para la API (ya sustituida por el token).
+  - **`dev` promovido** al tip de la rama por fast-forward en local, GitHub y Gitea
+    (`afeb5f1`), y es la rama por defecto: `bun add -g github:linux-fertxo/herm` instala
+    ya los arreglos, sin anclar ref. Queda pendiente de decidir si se sube el pin de
+    compatibilidad (no hace falta para funcionar contra el Hermes actual).
   - **Instalado como `herm`**: `~/.local/bin/herm -> ~/dev/herm/bin/herm.cjs` (que
-    ejecuta `dist/index.js`). `herm-tui@1.10.0` global desinstalado. Queda un
-    `herm-tui` **local** declarado en `~/package.json` (inerto, no está en el PATH).
+    ejecuta `dist/index.js`). `herm-tui@1.10.0` global desinstalado (ojo: `npm -g rm`
+    no lo veía porque el prefix de npm apunta a `~/.local/lib` y el paquete vivía en el
+    árbol de nvm — hubo que borrar `lib/node_modules/herm-tui` a mano). El `herm-tui`
+    local de `~/package.json` también está fuera.
 
