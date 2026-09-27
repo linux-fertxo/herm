@@ -9,6 +9,16 @@ memory, and kanban without leaving the terminal.
 > **herm** /hɜːm/ _noun_ : a sculptured head of Hermes on a square stone
 > pillar, used in ancient Greece as a boundary marker at crossroads.
 
+> **Fork notice** — this is
+> [`linux-fertxo/herm`](https://github.com/linux-fertxo/herm), a maintained fork of
+> [`liftaris/herm`](https://github.com/liftaris/herm). Upstream `dev` has been frozen at
+> `a0e4502` (2026-07-29), and Hermes Agent has since moved to desktop contract 8, which
+> breaks the released TUI: `4000 invalid params` on most RPCs, and blocking prompts
+> (clarify/approval) that never appear because the agent quietly answers them itself.
+> This fork restores Herm against current Hermes.
+> **Do not install the npm `herm-tui` package for this fork** — that is upstream's frozen
+> build. See [what this fork changes](#what-this-fork-changes).
+
 ## Why Herm
 
 Herm gives Hermes Agent an operator-focused TUI instead of scattering work
@@ -37,16 +47,27 @@ Herm requires:
 
 Try Herm without installing:
 
+> The `bunx`/npm `herm-tui` package is **upstream's frozen build** and does not work
+> against current Hermes Agent. Use one of the fork installs below.
+
+Install it globally, from a checkout (verified):
+
 ```bash
-bunx herm-tui
+git clone https://github.com/linux-fertxo/herm.git
+cd herm
+bun install
+bun run build
+ln -sfn "$PWD/bin/herm.cjs" ~/.local/bin/herm   # bin/herm.cjs execs dist/index.js under Bun
+herm
 ```
 
-Install it globally:
+Or let Bun install it globally from the repository, running `src/index.tsx` from
+source. **Pin the ref**: the contract-8 fixes live on
+`fix/gateway-contract-gate`, while the fork's `dev` is still the pre-fix upstream
+head.
 
 ```bash
-bun add -g herm-tui        # stable
-npm i -g herm-tui          # also fine
-bun add -g herm-tui@next   # bleeding edge, every dev push
+bun add -g github:linux-fertxo/herm#fix/gateway-contract-gate
 ```
 
 Run it:
@@ -73,7 +94,7 @@ upstream-injected `HERMES_TUI_GATEWAY_URL`.
 Or run from source:
 
 ```bash
-git clone https://github.com/liftaris/herm.git
+git clone https://github.com/linux-fertxo/herm.git
 cd herm
 bun install
 bun run src/index.tsx
@@ -180,6 +201,89 @@ If text is hard to read in tmux or a dark terminal, try a light theme such as
 `daylight`, `mercury`, or `github`. If tmux is the issue,
 `set -g default-terminal "tmux-256color"` in `~/.tmux.conf` often fixes color
 handling.
+
+## What this fork changes
+
+Upstream `dev` stopped at `a0e4502` (2026-07-29) while Hermes Agent kept moving;
+the shipped TUI no longer talks to a current gateway. Everything below was
+validated against Hermes Agent `0.21.5` (desktop contract **8**).
+
+### What broke
+
+1. **`session_id` was injected into every RPC.** Hermes validates params with
+   `extra="forbid"` and only ~82 of its 237 methods declare `session_id`, so two
+   thirds of the calls answered `4000 invalid params`. The error the TUI showed
+   was *"run `hermes update`"* — pointing at the wrong culprit.
+2. **The declared contract ceiling was 5.** A contract-8 backend made the client
+   block every mutating RPC ("Hermes backend contract 8 is newer than Herm
+   supports (4-5)"), which reads as a broken app but is a version gate.
+3. **Blocking prompts became server→client requests (contract 7).** The backend
+   sends `{"id":"srq-…","method":"clarify"}` and waits for a response frame. It
+   only writes such a frame to a transport that has advertised
+   `client.capabilities {server_requests: true}`; Herm never did, so
+   `server_requests.send` returned `None` and **the agent silently answered its
+   own questions** — the most misleading failure mode of the lot, because
+   nothing errors.
+4. **The `*.respond` RPCs are gone** (`clarify.respond`, `secret.respond`,
+   `sudo.respond`, `terminal.read.respond` → `-32601 unknown method`).
+
+### What changed here
+
+- **The contract is read from the source of truth.** `src/context/gateway-contract.ts`
+  consumes the artifact Hermes generates
+  (`apps/shared/src/gateway-contract.openrpc.json`: ~237 methods, 82
+  session-scoped, 73 notifications, 13 server requests) and resolves `$ref` plus
+  `allOf`/`anyOf`/`oneOf`. `session_id` is only sent to methods that declare it,
+  and methods whose names the artifact does not know lose the field instead of
+  earning a `4000`. Installs without the artifact fall back to an embedded set.
+- **Contract ceiling raised to 8.**
+- **Server→client requests are answered.** Herm advertises the capability on
+  `gateway.ready`, turns an incoming frame into the `*.request` event the
+  transcript already renders (the frame id becomes the part id, so the outcome
+  updates the card that was really asked), and replies with a JSON-RPC response
+  `{jsonrpc, id, result}`: `{answer}` / `{answers}` for clarify, `{choice, all?}`
+  for approval, `{value}` for sudo, secret and terminal reads. Methods with no
+  surface here (tour, vault prompts, preview/window reads) are declined
+  immediately, so the backend does not sit out its full deadline — clarify's is
+  an hour.
+- **Questions survive a dropped socket.** `open_requests` returned by
+  `session.resume`, `session.activate` and `session.events.since` are
+  re-delivered, so a question re-appears as an answerable card; a card whose
+  frame is gone says so instead of pretending it was answered.
+- **Batch clarify.** A `questions` batch is walked one entry at a time and
+  answered once with the whole `qid → answer` set; `Esc` sends `{}`, which the
+  backend reads as cancel-all.
+- **Dead RPCs purged** and approval answers routed through the request frame.
+
+### Verified how
+
+- `bun run test`: **1445 pass / 0 fail**; `bunx tsc --noEmit` clean;
+  `bun run build` clean.
+- **Live**, against a real gateway (0.21.5, contract 8): asking the agent to use
+  `clarify` produced a real `srq` frame, the card rendered in the transcript
+  (`ask ¿qué color pruebo?` · `1. rojo` · `2. azul`), pressing `2` answered the
+  frame, and the agent acted on it ("Elegiste azul").
+- `bun run test` pins `TZ=UTC TMPDIR=/tmp`. `bun test` runs the JS clock in UTC
+  while `bun:sqlite` keeps the host zone, so date-bucketed fixtures shift a day
+  on a non-UTC box; and a scratch dir whose ancestor has `.git` makes the
+  `utils/git` test find a repository where it asserts none.
+
+### Known limits
+
+- **The pinned compatibility artifacts still describe `hermes-agent@4da7b9ee`**
+  (July 2026). `gen-schema:check`, `gen-hermes-manifest:check` and
+  `gen-fixtures:check` verify against that revision, not the installed one, and
+  the extractor is pin-scoped: against a current Hermes it fails by design
+  (methods moved to `tui_gateway/methods_*.py`, `DEFAULT_CONFIG` to
+  `hermes_cli/config_defaults.py`). Moving the pin means regenerating the
+  manifest, schema, fixtures and capability overlay in one go.
+- Events newer than the pin are logged as `[event unknown]` in the gateway logs
+  ring buffer; they are not rendered until the pin moves.
+- `approvals.mode: smart` auto-approves whatever its auxiliary judge considers
+  safe (including flagged `… | sh` pipelines), so approval cards legitimately do
+  not appear in that mode. Use `manual` if you want to be asked.
+- **No upstream PR.** `liftaris/herm` has had no maintainer activity since
+  2026-07-29; these fixes live in the fork.
 
 ## Status and compatibility
 
