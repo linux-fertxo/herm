@@ -63,7 +63,7 @@ jobs:
 
       - run: bunx tsc --noEmit
 
-      - run: bun test
+      - run: bun run test
 
       - run: bun scripts/build.ts
 

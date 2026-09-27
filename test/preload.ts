@@ -24,6 +24,13 @@ process.env.PERF = ""
 // which reports as ~99 broken files instead of one broken environment.
 process.env.NODE_ENV = "test"
 
+// `bun test` runs the JS runtime in UTC whatever the host zone is, but
+// bun:sqlite's `date(...,'localtime')` keeps reading the *system* zone, so on a
+// non-UTC host the two disagree by a day and every day-bucketed fixture lands in
+// the wrong column (src/service/hermes-analytics.ts builds its buckets in JS and
+// buckets its rows in SQL). Setting TZ here is too late — the runtime has already
+// fixed its zone — so the pin lives in the `test` script: `TZ=UTC bun test`.
+
 // OpenTUI's own Markdown.test.ts pattern: one TreeSitterClient for the
 // whole suite, created in beforeAll, destroyed in afterAll. Under bun
 // test every t.destroy() drops rendererTracker's set to 0, which

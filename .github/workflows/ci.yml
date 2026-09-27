@@ -34,11 +34,11 @@ jobs:
           HERMES_AGENT_ROOT="${root}" bun run gen-fixtures:check
       - run: bun run test:check:strict
       - run: bunx tsc --noEmit
-      - run: bun test
+      - run: bun run test
       - name: randomized order
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           seed="$(date -u +%Y%m%d)"
-          echo "Replay command: bun test --randomize --seed=${seed}"
-          bun test --randomize --seed="${seed}"
+          echo "Replay command: TZ=UTC bun test --randomize --seed=${seed}"
+          TZ=UTC bun test --randomize --seed="${seed}"
       - run: bun run build
