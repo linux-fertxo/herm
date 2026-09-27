@@ -1,5 +1,13 @@
 export const MIN_BACKEND_CONTRACT = 4
-export const MAX_BACKEND_CONTRACT = 5
+/**
+ * Contracts 6 (read-only plugin rows), 7 (blocking prompts as server→client
+ * requests) and 8 (connectors) add no change to the RPCs this client sends, so
+ * the gate accepts them; the ceiling only has to catch a producer that moved the
+ * wire in a way a mutating call would misread. Contract 7's server→client
+ * requests are handled by the wire contract in `gateway-contract.ts` — they are
+ * not a reason to block every mutating call, which is what a 5 ceiling did.
+ */
+export const MAX_BACKEND_CONTRACT = 8
 
 export type BackendContractReason = "missing" | "malformed" | "older" | "supported" | "newer"
 

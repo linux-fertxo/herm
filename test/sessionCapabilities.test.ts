@@ -11,7 +11,7 @@ describe("backend contract", () => {
 
     expect(state).toMatchObject({
       minContract: 4,
-      maxContract: 5,
+      maxContract: 8,
       supported: false,
       reason: "missing",
       version: "0.19.0",
@@ -53,7 +53,7 @@ describe("backend contract", () => {
       sessionConnected: true,
       metadataHydrated: true,
       minContract: 4,
-      maxContract: 5,
+      maxContract: 8,
       observedContract: 4,
       contractSupported: true,
       contractReason: "supported",
@@ -64,10 +64,10 @@ describe("backend contract", () => {
   })
 
   test("newer producer contract is surfaced as unsupported", () => {
-    const state = info(6)
+    const state = info(9)
 
     expect(state).toMatchObject({
-      observedContract: 6,
+      observedContract: 9,
       supported: false,
       reason: "newer",
     })
