@@ -187,4 +187,15 @@ aprobaciones dependen de `approvals.mode`; clarify no.
     no lo veía porque el prefix de npm apunta a `~/.local/lib` y el paquete vivía en el
     árbol de nvm — hubo que borrar `lib/node_modules/herm-tui` a mano). El `herm-tui`
     local de `~/package.json` también está fuera.
+  - **28-sep, post-entrega — bug hallado en uso real**: el frame lleva su propio id
+    (`srq-…`), pero `approval` **declara además un `request_id` suyo**
+    (`tools/approval_gateway_wait.py`: `setdefault("request_id", uuid4().hex)`); la
+    traducción `{request_id: id, ...params}` dejaba ganar al de dentro, así que la tarjeta
+    contestaba con un id que `_open` no conocía → «this request is no longer open» y
+    **nada llegaba al backend** (el log lo registraba como «prompt timed out without a
+    user response»). Arreglado en `a9b3e9a` (el id del frame, el último) con test de
+    regresión verificado por mutación. Comprobado A/B con dos bundles (con y sin el bug) y
+    con la mano de Fertxo sobre la tarjeta real de fichero protegido. Suite: 1446/0.
+    Para el futuro: hay **dos familias** de tarjeta y solo la del `approval_gateway_wait`
+    (comando peligroso, fichero protegido) lleva ese campo; la del escáner Tirith no.
 

@@ -241,7 +241,10 @@ validated against Hermes Agent `0.21.5` (desktop contract **8**).
   transcript already renders (the frame id becomes the part id, so the outcome
   updates the card that was really asked), and replies with a JSON-RPC response
   `{jsonrpc, id, result}`: `{answer}` / `{answers}` for clarify, `{choice, all?}`
-  for approval, `{value}` for sudo, secret and terminal reads. Methods with no
+  for approval, `{value}` for sudo, secret and terminal reads. **The reply carries
+  the frame's own id**, never a `request_id` a param may declare of its own —
+  `approval` declares one, `clarify` does not, and letting that inner id win makes
+  every answer land on a request the backend no longer considers open. Methods with no
   surface here (tour, vault prompts, preview/window reads) are declined
   immediately, so the backend does not sit out its full deadline — clarify's is
   an hour.
@@ -256,7 +259,7 @@ validated against Hermes Agent `0.21.5` (desktop contract **8**).
 
 ### Verified how
 
-- `bun run test`: **1445 pass / 0 fail**; `bunx tsc --noEmit` clean;
+- `bun run test`: **1446 pass / 0 fail**; `bunx tsc --noEmit` clean;
   `bun run build` clean.
 - **Live**, against a real gateway (0.21.5, contract 8): asking the agent to use
   `clarify` produced a real `srq` frame, the card rendered in the transcript
