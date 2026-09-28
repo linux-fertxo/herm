@@ -38,13 +38,16 @@ const EVENT_OF: Record<string, string> = {
 }
 
 /** Hermes sends a blocking question as a server→client request; the transcript
- *  renders the `*.request` event that used to carry it. Translate one to the
- *  other, keeping the frame id as `request_id` because that — not a follow-up
- *  RPC — is what routes the answer back to the backend that asked. */
+ *  renders the `*.request` event that used to carry it, keeping the frame id as
+ *  `request_id` because that — not a follow-up RPC — is what routes the answer
+ *  back to the backend that asked. It goes last: `approval` params declare a
+ *  `request_id` of their own, and letting it win made every answer miss the open
+ *  frame ("this request is no longer open"). The backend settles responses by
+ *  the frame id (`server_requests.resolve_response`). */
 function ask(id: string, method: string, params: Record<string, unknown>): GatewayEvent | null {
   const type = EVENT_OF[method]
   if (!type) return null
-  return { type, payload: { request_id: id, ...params } } as GatewayEvent
+  return { type, payload: { ...params, request_id: id } } as GatewayEvent
 }
 
 export type GatewayEventSource = "stdio" | "websocket" | "control" | "internal"

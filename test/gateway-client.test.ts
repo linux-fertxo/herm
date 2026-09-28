@@ -525,6 +525,41 @@ describe("GatewayClient websocket attach mode", () => {
     gw.kill()
   })
 
+  test("answers a server request by frame id, not the params' own request_id", async () => {
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?token=abc"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const gw = new GatewayClient()
+    const events: GatewayEvent[] = []
+    gw.on("event", ev => events.push(ev))
+    gw.drain()
+    gw.start()
+    const ws = FakeSocket.list[0]!
+    ws.open()
+    await Bun.sleep(0)
+
+    // `approval` params declare a request_id of their own; the frame id is what
+    // the backend keys the open request by, so it has to be what the card
+    // carries — otherwise every answer lands on a closed request and the card
+    // reports "this request is no longer open".
+    ws.message(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "srq-7",
+      method: "approval",
+      params: { request_id: "appr-9", command: "rm -rf /tmp/x", description: "delete" },
+    }))
+
+    const card = events.find(ev => ev.type === "approval.request")
+    expect(card?.payload).toMatchObject({ request_id: "srq-7", command: "rm -rf /tmp/x" })
+
+    expect(gw.respond("appr-9", { choice: "once" })).toBe(false)
+    expect(gw.respond("srq-7", { choice: "once" })).toBe(true)
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+      jsonrpc: "2.0", id: "srq-7", result: { choice: "once" },
+    })
+    expect(gw.respond("srq-7", { choice: "deny" })).toBe(false)
+    gw.kill()
+  })
+
   test("socket close emits exit and reconnects with the reusable URL", () => {
     process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws?internal=abc"
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
