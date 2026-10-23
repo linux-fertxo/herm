@@ -333,6 +333,10 @@ export class GatewayClient extends EventEmitter {
   private push(ev: GatewayEvent, source: GatewayEventSource = "internal") {
     this.diagnose(ev, source)
     this.trackPrompt(ev)
+    // A session opened from the list can deliver its history inside an event payload instead of
+    // the RPC reply; those rows need the same translation or the transcript stays blank.
+    const payload = rec((ev as { payload?: unknown }).payload)
+    if (payload && payload.messages !== undefined) payload.messages = this.history(payload.messages)
     if (ev.type === "gateway.ready") {
       this.ok = true
       if (this.timer) { clearTimeout(this.timer); this.timer = null }
