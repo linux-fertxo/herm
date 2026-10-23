@@ -879,7 +879,8 @@ export const HERMES_MANIFEST = {
           "voice.tts"
         ],
         "removals": [
-          "client.capabilities"
+          "client.capabilities",
+          "runtime.describe"
         ],
         "likelyRenames": []
       }
