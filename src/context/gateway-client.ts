@@ -83,6 +83,61 @@ export function gatewayUrl(): string | null {
     || null
 }
 
+/** Grant from the install's own `gateway_bootstrap.py`: the profile's live gateway endpoint
+ *  and the subprotocols that carry the single-use session ticket. It is the same helper the
+ *  official Ink TUI dials, so an upgraded Hermes keeps working without a copy here. */
+export interface GatewayGrant {
+  url: string
+  protocols: string[]
+  profile_id: string
+  instance_id: string
+}
+
+const BOOTSTRAP_MS = 40_000
+
+/** The install ships the bootstrap; we never fork it. An older install has no gateway to attach
+ *  to (its TUI owned the profile itself), which is the one case where the stdio backend is right. */
+export function bootstrapScript(root: string): string {
+  return resolve(root, "ui-tui", "scripts", "gateway_bootstrap.py")
+}
+
+function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
+  return new Response(stream).text().catch(() => "")
+}
+
+/** Ask the install for an attach ticket. `start` may bring up a gateway that is not running;
+ *  `recover` re-ensures one whose recorded state claims it is live after a crash. */
+export async function fetchGrant(
+  root: string,
+  opts: { start?: boolean; recover?: boolean } = {},
+): Promise<GatewayGrant> {
+  const script = bootstrapScript(root)
+  if (!existsSync(script)) throw new Error(`gateway bootstrap missing: ${script}`)
+  const args = [script, ...(opts.start ? ["--start"] : opts.recover ? ["--recover"] : [])]
+  const proc = Bun.spawn([python(root), ...args], {
+    cwd: root,
+    env: { ...process.env, PYTHONPATH: root, HERMES_PYTHON_SRC_ROOT: root } as Record<string, string>,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const timer = setTimeout(() => { try { proc.kill() } catch {} }, BOOTSTRAP_MS)
+  try {
+    const [out, err, code] = await Promise.all([readAll(proc.stdout), readAll(proc.stderr), proc.exited])
+    if (code !== 0) {
+      // The helper prints a verdict line ("gateway unavailable: …" / "gateway stopped: …") on
+      // stderr; it is meant for the user, so it is passed through as-is.
+      const verdict = err.trim() || `gateway bootstrap failed (${code})`
+      throw new Error(verdict)
+    }
+    const grant = JSON.parse(out.trim()) as GatewayGrant
+    if (!grant?.url || !Array.isArray(grant.protocols)) throw new Error("gateway bootstrap returned no grant")
+    return grant
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function websocketUrl(raw: string): string {
   const url = new URL(raw)
   if (url.protocol === "http:") url.protocol = "ws:"
@@ -214,17 +269,37 @@ async function lines(stream: ReadableStream<Uint8Array>, cb: (line: string) => v
   }
 }
 
+function responseValue(result: Record<string, unknown>): string {
+  // The transcript answers with `answer` (clarify), `choice` (approval), `value` (secret/sudo)
+  // or `answers` (multi-select). The canonical RPC takes one string; declining sends "".
+  for (const key of ["answer", "choice", "value"]) {
+    const v = result[key]
+    if (typeof v === "string") return v
+  }
+  const many = result.answers
+  if (Array.isArray(many)) return many.filter(x => typeof x === "string").join(", ")
+  return ""
+}
+
 export class GatewayClient extends EventEmitter {
   private proc: ReturnType<typeof Bun.spawn> | null = null
   private ws: WebSocket | null = null
   private link: Promise<void> | null = null
   private target: string | null = null
+  /** Ticket grant for the profile's gateway; its presence means requests travel over the socket. */
+  private grant: GatewayGrant | null = null
+  /** Which transport this client is on: the profile's gateway ("ws") or its own child ("stdio"). */
+  private mode: "ws" | "stdio" | null = null
+  /** In-flight attach, so a request issued during startup waits for the ticket instead of racing it. */
+  private attaching: Promise<void> | null = null
   private id = 0
   private logs: string[] = []
   private unknown = new Map<string, Diag>()
   private pending = new Map<string, Pending>()
   /** Frame ids of server→client requests rendered but not yet answered. */
   private open = new Set<string>()
+  /** Prompts announced as events on the canonical socket: answered by RPC, not by a frame reply. */
+  private prompts = new Map<string, { kind: "clarify" | "approval"; generation: string; session: string }>()
   private buf: GatewayEvent[] = []
   private contract = backend.backendContract(null)
   private declared = loadContract(hermesAgentRoot())
@@ -235,8 +310,22 @@ export class GatewayClient extends EventEmitter {
 
   private root(): string { return hermesAgentRoot() }
 
+  constructor() {
+    super()
+    // Readiness can arrive before a surface subscribes (attach is a ~300 ms subprocess, React
+    // mounts when it mounts). A listener that shows up after the fact must not sit at "not
+    // connected" while every RPC works, so the current readiness is replayed to it once.
+    this.on("newListener", name => {
+      if (name !== "event" || !this.ok) return
+      queueMicrotask(() => {
+        if (this.ok) this.emit("event", { type: "gateway.ready", payload: { source: "replay" } } as GatewayEvent)
+      })
+    })
+  }
+
   private push(ev: GatewayEvent, source: GatewayEventSource = "internal") {
     this.diagnose(ev, source)
+    this.trackPrompt(ev)
     if (ev.type === "gateway.ready") {
       this.ok = true
       if (this.timer) { clearTimeout(this.timer); this.timer = null }
@@ -351,9 +440,42 @@ export class GatewayClient extends EventEmitter {
   /** Answer an open server→client request by frame id. False when nothing is
    *  open under that id: already answered, or withdrawn by the backend. */
   respond(id: string, result: Record<string, unknown>): boolean {
+    const prompt = this.mode === "ws" ? this.prompts.get(id) : undefined
+    if (prompt) {
+      // The canonical socket does not accept a bare JSON-RPC response frame for a prompt: it
+      // arrives as an event and is settled by a generation-bound `*.respond` RPC.
+      this.prompts.delete(id)
+      this.open.delete(id)
+      const field = prompt.kind === "clarify" ? "answer" : "choice"
+      const method = prompt.kind === "clarify" ? "clarify.respond" : "approval.respond"
+      void this.request(method, {
+        session_id: prompt.session,
+        execution_generation: prompt.generation,
+        prompt_id: id,
+        [field]: responseValue(result),
+      }).catch(err => this.log(`[respond] ${method} failed: ${crop(err instanceof Error ? err.message : String(err))}`))
+      return true
+    }
     if (!this.open.delete(id)) return false
     this.reply(id, { result })
     return true
+  }
+
+  /** Canonical prompts carry `prompt_id`; the transcript answers by `request_id`, so the id is
+   *  mirrored into the payload and the generation kept for the settle RPC. */
+  private trackPrompt(ev: GatewayEvent) {
+    if (ev.type !== "clarify.request" && ev.type !== "approval.request") return
+    const frame = rec(ev)
+    const body = rec(frame?.payload)
+    const id = body && typeof body.prompt_id === "string" ? body.prompt_id : undefined
+    if (!body || !id) return
+    if (body.request_id === undefined) body.request_id = id
+    const session = typeof frame?.session_id === "string" ? frame.session_id : this.sid
+    this.prompts.set(id, {
+      kind: ev.type === "clarify.request" ? "clarify" : "approval",
+      generation: String(body.execution_generation ?? ""),
+      session,
+    })
   }
 
   private reply(id: string, body: Record<string, unknown>) {
@@ -370,7 +492,7 @@ export class GatewayClient extends EventEmitter {
     this.pending.clear()
   }
 
-  private connect(raw: string) {
+  private connect(raw: string, protocols: string[] = []) {
     const cwd = process.env.HERMES_CWD || process.cwd()
     let url: string
     try { url = websocketUrl(raw) }
@@ -385,7 +507,7 @@ export class GatewayClient extends EventEmitter {
 
     const safe = redact(url)
     let ws: WebSocket
-    try { ws = new WebSocket(url) }
+    try { ws = protocols.length ? new WebSocket(url, protocols) : new WebSocket(url) }
     catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[startup] websocket failed (${safe}): ${message}`)
@@ -402,6 +524,7 @@ export class GatewayClient extends EventEmitter {
       ws.addEventListener("open", () => {
         if (settled) return
         settled = true
+        if (protocols.length) this.log(`[startup] attached (subprotocol=${ws.protocol || "none"})`)
         resolve()
       }, { once: true })
       ws.addEventListener("error", () => {
@@ -458,6 +581,55 @@ export class GatewayClient extends EventEmitter {
     })
   }
 
+  private markReady() {
+    // The canonical socket carries no legacy `desktop_contract` number: it is an authenticated,
+    // typed session socket that advertises capabilities instead. Once the owner describes itself
+    // the legacy gate is satisfied by construction — protocol drift there shows up as `-32601`
+    // or a refused handshake, never as a silently misread mutating call.
+    this.contract = {
+      ...this.contract,
+      observedContract: backend.MAX_BACKEND_CONTRACT,
+      supported: true,
+      reason: "supported",
+    }
+    this.log(`[startup] ready via runtime.describe (already=${this.ok})`)
+    if (this.ok) return
+    this.push({ type: "gateway.ready", payload: { source: "runtime.describe" } } as GatewayEvent)
+  }
+
+  /** Attach to the profile's gateway with a single-use ticket from the install's own bootstrap.
+   *  Nothing is spawned and nothing is owned: closing the TUI just closes the socket. */
+  private attach(): Promise<void> {
+    this.mode = "ws"
+    const run = (async () => {
+      try {
+        const grant = await fetchGrant(this.root(), { start: process.env.HERM_GATEWAY_START === "1" })
+        if (this.mode !== "ws") return
+        this.grant = grant
+        this.connect(grant.url, grant.protocols)
+        // The canonical socket has no `gateway.ready` frame: readiness is the owner describing
+        // itself. Without this the transcript stays "not ready" while every RPC works.
+        void this.link
+          ?.then(() => this.request("runtime.describe"))
+          .then(() => this.markReady())
+          .catch(err => this.log(`[startup] runtime.describe failed: ${crop(err instanceof Error ? err.message : String(err))}`))
+      } catch (err) {
+        if (this.mode !== "ws") return
+        this.mode = null
+        const message = err instanceof Error ? err.message : String(err)
+        this.log(`[startup] attach failed: ${crop(message)}`)
+        // The helper's verdict is one or more lines meant for the user (a refusal's remedy, or a
+        // start that died); each becomes a transcript line rather than a swallowed stack trace.
+        for (const part of message.split("\n").filter(Boolean))
+          this.push({ type: "gateway.stderr", payload: { line: part } })
+        if (this.sub) this.emit("exit", null)
+        else this.exit = null
+      }
+    })()
+    this.attaching = run
+    return run
+  }
+
   start() {
     const raw = gatewayUrl()
     const root = this.root()
@@ -476,6 +648,7 @@ export class GatewayClient extends EventEmitter {
     this.buf = []
     this.contract = backend.backendContract(null)
     this.exit = undefined
+    this.grant = null
 
     let restarted = false
     const previous = this.proc
@@ -496,7 +669,13 @@ export class GatewayClient extends EventEmitter {
     }
 
     if (this.timer) clearTimeout(this.timer)
-    if (raw) { this.connect(raw); return }
+    if (raw) { this.mode = "ws"; this.connect(raw); return }
+    // Hermes ≥0.22 keeps one owner per profile: a second `tui_gateway.entry` is refused with
+    // "owned by a running gateway". So the TUI is a client of the profile's gateway over its
+    // ticketed WebSocket — and closing the TUI no longer takes the scheduler down with it.
+    // HERM_OWN_BACKEND=1 restores the old behaviour (own the profile) as an escape hatch.
+    if (!process.env.HERM_OWN_BACKEND) { void this.attach(); return }
+    this.mode = "stdio"
     this.timer = setTimeout(() => {
       if (this.ok) return
       this.log(`[startup] timed out (python=${bin}, cwd=${cwd})`)
@@ -599,6 +778,19 @@ export class GatewayClient extends EventEmitter {
     if (blocked) return Promise.reject(blocked)
     const raw = gatewayUrl()
     if (raw) return this.remote<T>(raw, method, params)
+    // Local profile: the ticket is fetched once per start(); a request that lands during startup
+    // waits for it instead of racing, so the very first session.create still finds a transport.
+    if (this.mode === "ws" || (!this.proc && !process.env.HERM_OWN_BACKEND)) {
+      if (!this.grant) {
+        const wait = this.attaching ?? (this.start(), this.attaching)
+        if (!wait) return Promise.reject(new Error("gateway not ready"))
+        return wait.then(() => {
+          if (!this.grant) throw new Error("gateway attach failed")
+          return this.remote<T>(this.grant.url, method, params)
+        })
+      }
+      return this.remote<T>(this.grant.url, method, params)
+    }
     if (!this.proc || this.proc.exitCode !== null) this.start()
 
     const stdin = this.proc?.stdin
@@ -640,7 +832,7 @@ export class GatewayClient extends EventEmitter {
     if (blocked) return Promise.reject(blocked)
     try { websocketUrl(raw) }
     catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
-    if (this.target !== raw || !this.ws || this.ws.readyState === WS_CLOSING || this.ws.readyState === WS_CLOSED)
+    if (this.target !== raw || (!this.ws && !this.attaching) || this.ws?.readyState === WS_CLOSING || this.ws?.readyState === WS_CLOSED)
       this.start()
 
     const rid = `r${++this.id}`
@@ -659,6 +851,8 @@ export class GatewayClient extends EventEmitter {
 
       const send = async () => {
         try {
+          // A request issued while the ticket was still being fetched waits here, not fails.
+          if (this.attaching) await this.attaching
           if (this.ws?.readyState === WS_CONNECTING) await this.link
           if (!this.pending.has(rid)) return
           if (!this.ws || this.ws.readyState !== WS_OPEN) throw new Error(`gateway not connected: ${method}`)

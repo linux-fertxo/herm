@@ -60,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.HERM_GATEWAY_URL
   delete process.env.HERMES_TUI_GATEWAY_URL
+  delete process.env.HERM_OWN_BACKEND
   if (original) globalThis.WebSocket = original
   else delete (globalThis as { WebSocket?: unknown }).WebSocket
   globalThis.setTimeout = timer
@@ -136,6 +137,10 @@ describe("python", () => {
 })
 
 describe("GatewayClient", () => {
+  // This block exercises the legacy stdio backend, which is now opt-in: the default is to
+  // attach to the profile's gateway (covered by the websocket attach block below).
+  beforeEach(() => { process.env.HERM_OWN_BACKEND = "1" })
+
   test("unsupported backend contract blocks mutations before transport writes", async () => {
     const prev = Bun.spawn
     let spawns = 0
@@ -380,6 +385,90 @@ describe("GatewayClient", () => {
 })
 
 describe("GatewayClient websocket attach mode", () => {
+  /** Pretend the install tree exists without touching the environment: an `existsSync` spy is
+   *  restored per test, while `HERMES_AGENT_ROOT` would leak into every later file in the run. */
+  const installedRoot = () => {
+    const real = fs.existsSync
+    const spy = spyOn(fs, "existsSync").mockImplementation(
+      (p: fs.PathLike) => String(p).endsWith("gateway_bootstrap.py") || real.call(fs, p),
+    )
+    return () => spy.mockRestore()
+  }
+
+  /** Stub the bootstrap subprocess: a grant on stdout, or a verdict on stderr with a non-zero code. */
+  const fakeBootstrap = (out: string, err = "", code = 0) => {
+    const prev = Bun.spawn
+    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => ({
+      stdout: new Response(out).body!,
+      stderr: new Response(err).body!,
+      exited: Promise.resolve(code),
+      kill: () => {},
+    })) as unknown as typeof Bun.spawn
+    return () => { ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = prev }
+  }
+
+  test("attaches with the install bootstrap's grant instead of spawning a backend", async () => {
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const restoreRoot = installedRoot()
+    const grant = {
+      url: "ws://127.0.0.1:1234/api/ws",
+      protocols: ["hermes-gateway-v1", "hermes-gateway-ticket.tkt"],
+      profile_id: "/home/x/.hermes",
+      instance_id: "abc",
+    }
+    const restore = fakeBootstrap(JSON.stringify(grant))
+    const gw = new GatewayClient()
+    try {
+      gw.start()
+      await Bun.sleep(20)
+      expect(FakeSocket.list[0]?.url).toBe("ws://127.0.0.1:1234/api/ws")
+      FakeSocket.list[0]?.open()
+      await Bun.sleep(10)
+      expect(gw.tail()).toContain("attached")
+    } finally {
+      restore()
+      restoreRoot()
+      gw.kill()
+    }
+  })
+
+  test("a refused attach surfaces the verdict and never spawns a backend", async () => {
+    const verdict = "gateway stopped: not running\nstart it with `hermes gateway start`"
+    const restoreRoot = installedRoot()
+    const prev = Bun.spawn
+    let spawns = 0
+    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = (() => {
+      spawns++
+      return {
+        stdout: new Response("").body!,
+        stderr: new Response(verdict + "\n").body!,
+        exited: Promise.resolve(1),
+        kill: () => {},
+      }
+    }) as unknown as typeof Bun.spawn
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    gw.on("event", ev => {
+      const e = ev as { type: string; payload?: { line?: string } }
+      if (e.type === "gateway.stderr" && e.payload?.line) lines.push(e.payload.line)
+    })
+    gw.drain()
+    try {
+      gw.start()
+      await Bun.sleep(20)
+      // Exactly one child: the bootstrap. The stdio backend is opt-in, never the fallback.
+      expect(spawns).toBe(1)
+      expect(lines.length).toBe(2)
+      expect(lines[0]).toContain("gateway stopped")
+      expect(lines[1]).toContain("hermes gateway start")
+      expect(gw.ready).toBe(false)
+    } finally {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = prev
+      restoreRoot()
+      gw.kill()
+    }
+  })
+
   test("startup timeout closes a wedged websocket and reports exit", async () => {
     globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => (
       timer(args[0], args[1] === 15_000 ? 0 : args[1], ...args.slice(2))
