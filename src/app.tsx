@@ -180,7 +180,12 @@ const AppInner = ({ launch: launch0, onSwitchProfile }: {
       return state.reason === "missing" && prev.supported ? prev : state
     })
   }, [])
-  const capabilities = sessionCapabilities({ sid, ready, streaming: active, contract })
+  const capabilities = sessionCapabilities({
+    sid, ready, streaming: active,
+    // The live client wins when it has satisfied the legacy gate (canonical attach always does);
+    // otherwise the value observed from startup events is the best we have.
+    contract: gw.backendContract?.supported ? gw.backendContract : contract,
+  })
   const [title, setTitle] = useState("")
   const caption = title.trim()
   const titleRef = useRef(caption); titleRef.current = caption

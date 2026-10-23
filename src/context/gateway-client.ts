@@ -314,10 +314,15 @@ export class GatewayClient extends EventEmitter {
     super()
     // Readiness can arrive before a surface subscribes (attach is a ~300 ms subprocess, React
     // mounts when it mounts). A listener that shows up after the fact must not sit at "not
-    // connected" while every RPC works, so the current readiness is replayed to it once.
+    // connected" while every RPC works, so the buffered events are flushed to the first one and
+    // the current readiness is replayed.
     this.on("newListener", name => {
-      if (name !== "event" || !this.ok) return
+      if (name !== "event") return
       queueMicrotask(() => {
+        if (!this.sub) {
+          this.sub = true
+          for (const ev of this.buf.splice(0)) this.emit("event", ev)
+        }
         if (this.ok) this.emit("event", { type: "gateway.ready", payload: { source: "replay" } } as GatewayEvent)
       })
     })
@@ -929,5 +934,11 @@ export class GatewayClient extends EventEmitter {
 
   get ready(): boolean {
     return this.ok
+  }
+
+  /** The contract this client actually operates under: canonical attach satisfies the legacy
+   *  gate, so the UI must read this instead of a stale value from startup events. */
+  get backendContract() {
+    return this.contract
   }
 }

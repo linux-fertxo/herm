@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useRef, useState, useMemo, useCal
 import type { ReactNode } from "react"
 import { EventEmitter } from "events"
 import { GatewayClient, type GatewayEventSource } from "../context/gateway-client"
+import type { BackendContract } from "../context/backend-contract"
 import type { GatewayEvent } from "../context/wire"
 
 /** Minimal surface consumers depend on. GatewayClient satisfies this. */
@@ -21,6 +22,8 @@ export interface Gateway extends EventEmitter {
   tail(n?: number): string
   diagnose?(ev: GatewayEvent, source?: GatewayEventSource): void
   readonly ready: boolean
+  /** Contract the live client operates under; canonical attach satisfies the legacy gate. */
+  readonly backendContract?: BackendContract
 }
 
 type Ctx = {
