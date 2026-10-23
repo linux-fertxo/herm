@@ -925,6 +925,11 @@ export class GatewayClient extends EventEmitter {
     if (canonical && method === "prompt.submit"
         && out.input_id === undefined && out.submission_id === undefined)
       out.input_id = crypto.randomUUID()
+    // The canonical snapshot ships an EMPTY `messages` unless the display projection is asked
+    // for (measured: 0 vs 746 rows on the same session). Without this a resumed session keeps its
+    // context but the transcript has nothing to draw.
+    if (canonical && method === "session.resume" && out.display_projection === undefined)
+      out.display_projection = true
     return out
   }
 
