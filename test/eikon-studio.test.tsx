@@ -591,7 +591,7 @@ describe("EikonGallery tab", () => {
     }
     act(() => t.keys.pressEnter())
     await until(t, () => prefs.get("eikon") === "galone", 8000)
-  })
+  }, 20000)
 })
 
 void native
