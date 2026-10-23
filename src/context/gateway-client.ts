@@ -470,7 +470,16 @@ export class GatewayClient extends EventEmitter {
           .map(part => (typeof part === "string" ? part : (rec(part)?.text as string | undefined) ?? ""))
           .join("")
       const role = typeof o.role === "string" ? o.role : "assistant"
-      return { ...o, role, text }
+      // El snapshot nombra el razonamiento de dos formas según la ruta
+      // (`reasoning` de la proyección de display, `reasoning_content` de la fila
+      // cruda). Se normaliza aquí para que el transcript pueda pintarlo.
+      const raw = (typeof o.reasoning === "string" && o.reasoning)
+        || (typeof o.reasoning_content === "string" ? o.reasoning_content : "")
+      // DeepSeek rellena `reasoning_content` con un espacio cuando el turno no
+      // trajo razonamiento (la API rechaza la cadena vacía): un espacio no es
+      // razonamiento y dejaría la pestaña en blanco.
+      const reasoning = raw.trim() ? raw : undefined
+      return { ...o, role, text, ...(reasoning ? { reasoning } : {}) }
     })
   }
 

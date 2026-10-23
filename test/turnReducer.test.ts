@@ -266,4 +266,23 @@ describe("transcriptToMessages", () => {
     expect(ms).toHaveLength(1)
     expect(ms[0].role).toBe("user")
   })
+
+  // Al reanudar, el snapshot trae el razonamiento en `reasoning`: si se tira, la
+  // pestaña reasoning de la cajita sale vacía al fijar un turno ya cerrado.
+  test("el razonamiento persistido vuelve como part thinking antes del texto", () => {
+    const ms = transcriptToMessages([
+      { role: "user", text: "¿qué hora es?" },
+      { role: "assistant", text: "Son las 19:30.", reasoning: "Miro el reloj primero." },
+      { role: "assistant", text: "Sin razonamiento guardado." },
+    ])
+    expect(ms).toHaveLength(3)
+    expect(kinds(ms[1].parts)).toEqual(["thinking", "text"])
+    expect(ms[1].parts[0]).toMatchObject({ type: "thinking", content: "Miro el reloj primero.", streaming: false })
+    expect(kinds(ms[2].parts)).toEqual(["text"])
+  })
+
+  test("un razonamiento en blanco (el relleno de DeepSeek) no crea part", () => {
+    const ms = transcriptToMessages([{ role: "assistant", text: "Hola.", reasoning: " " }])
+    expect(kinds(ms[0].parts)).toEqual(["text"])
+  })
 })
