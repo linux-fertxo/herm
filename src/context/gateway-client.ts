@@ -922,7 +922,9 @@ export class GatewayClient extends EventEmitter {
 
   private refreshGeneration(): Promise<void> {
     if (this.refreshing) return this.refreshing
-    this.refreshing = this.request("session.info", { session_id: this.sid })
+    // `session.info` carries only metadata (tools, model…): the snapshot with `execution_generation`
+    // and `revision` is `session.resume`, asked without the display projection so it stays cheap.
+    this.refreshing = this.request("session.resume", { session_id: this.sid, display_projection: false })
       .then(res => { this.identity(res); this.refreshing = null })
       .catch(() => { this.refreshing = null })
     return this.refreshing
