@@ -103,10 +103,25 @@ export const ThoughtCloud = memo((props: {
   const tools = all.filter((p): p is ToolPart => p.type === "tool")
   const seen = tools.filter(t => visible(t, detail))
   const [pane, setPane] = useState<Pane>("reasoning")
+  // El usuario ha tocado una pestaña: manda él hasta que cambie de mensaje.
+  // Sin esto, un cambio automático le tapaba lo que estaba leyendo.
+  const userPane = useRef(false)
+  const msgKey = src?.id ?? ""
+  useEffect(() => { userPane.current = false }, [msgKey])
+  const running = tools.some(t => t.status === "running")
+  const thinkChars = think.reduce((n, p) => n + p.content.length, 0)
+  // Razonamiento que está llegando AHORA (deltas): manda sobre los tools.
+  const thinkLive = think.some(p => p.streaming)
   useEffect(() => {
-    if (pane === "reasoning" && think.length === 0 && seen.length > 0) setPane("tools")
-    if (pane === "tools" && seen.length === 0 && think.length > 0) setPane("reasoning")
-  }, [pane, think.length, seen.length])
+    if (userPane.current) return
+    if (thinkLive) { setPane("reasoning"); return }
+    if (running) { setPane("tools"); return }
+    // Proveedores que NO streamean el reasoning (DeepSeek manda un único
+    // `reasoning.available` DESPUÉS de los tool calls) dejaban la cajita
+    // clavada en tools para siempre: el reasoning existía y no se veía.
+    if (thinkChars > 0) { setPane("reasoning"); return }
+    if (seen.length > 0) setPane("tools")
+  }, [thinkLive, running, thinkChars, seen.length])
   const body = pane === "reasoning" ? think : seen
 
   // Auto-grow: track content until the user drags; then their size
@@ -138,7 +153,7 @@ export const ThoughtCloud = memo((props: {
     const on = pane === id
     return (
       <box height={1} marginRight={2}
-           onMouseDown={(e: MouseEvent) => { e.stopPropagation(); setPane(id) }}>
+           onMouseDown={(e: MouseEvent) => { e.stopPropagation(); userPane.current = true; setPane(id) }}>
         <text>
           <span fg={on ? theme.accent : theme.textMuted}>
             {on ? <strong>{label}</strong> : label}
@@ -156,7 +171,7 @@ export const ThoughtCloud = memo((props: {
       backgroundColor={theme.backgroundPanel} paddingX={1}
     >
       <box height={1} flexShrink={0} flexDirection="row">
-        {pill("reasoning", "reasoning", null)}
+        {pill("reasoning", pane === "reasoning" || think.length === 0 ? "reasoning" : "reasoning •", null)}
         {pill("tools", "tools", seen.length)}
         <box flexGrow={1} />
         {detail !== "expanded" ? (
