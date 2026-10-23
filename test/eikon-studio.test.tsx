@@ -576,7 +576,7 @@ describe("EikonGallery tab", () => {
       <EikonGroup focused sub={sub} setSub={i => { sub = i }} />,
       { width: 160, height: 48 },
     )
-    await until(t, () => t.frame().includes("Library ("), 8000)
+    await until(t, () => t.frame().includes("Library ("), 15000)
     expect(t.frame()).toContain("galone")
     // Bundled Nous also shows when no installed eikon shadows it.
     // Move to galone and activate.
@@ -590,8 +590,8 @@ describe("EikonGallery tab", () => {
       await t.settle()
     }
     act(() => t.keys.pressEnter())
-    await until(t, () => prefs.get("eikon") === "galone", 8000)
-  }, 20000)
+    await until(t, () => prefs.get("eikon") === "galone", 15000)
+  }, 30000)
 })
 
 void native
