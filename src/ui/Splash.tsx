@@ -9,7 +9,7 @@ import type { BoxRenderable } from "@opentui/core"
 import { useTheme } from "../theme"
 import { frame } from "./splash-art"
 import { tips } from "../service/tips"
-import { VERSION } from "../app/launch"
+import { VERSION, BUILD_SHA } from "../app/launch"
 
 export type SplashInfo = {
   agentVersion?: string
@@ -65,7 +65,7 @@ export function Splash(p: SplashProps) {
   const behind = p.info?.behind
   const count = behind == null || behind < 0 ? null : behind === 0 ? "up to date" : `${behind} behind`
   const sub = [
-    `v${VERSION}`,
+    `v${VERSION}${BUILD_SHA ? ` (${BUILD_SHA})` : ""}`,
     p.info ? `hermes ${p.info.agentVersion ?? "?"}` : "…",
     count,
     p.info?.model,

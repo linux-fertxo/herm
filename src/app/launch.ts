@@ -16,7 +16,21 @@ const pkgVersion = (d: string, up = 4): string => {
   return up > 0 ? pkgVersion(dirname(d), up - 1) : "0.0.0"
 }
 
+/** Short git SHA of the running checkout, or "" outside a git tree (published bundle).
+ *  A version number alone hides which bundle is live — today two of them were in play. */
+const gitSha = (d: string, up = 4): string => {
+  try {
+    const r = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: d, stdout: "pipe", stderr: "ignore" })
+    if (r.exitCode === 0) {
+      const sha = new TextDecoder().decode(r.stdout).trim()
+      if (sha) return sha
+    }
+  } catch { /* not a checkout: fall through */ }
+  return up > 0 ? gitSha(dirname(d), up - 1) : ""
+}
+
 export const VERSION = pkgVersion(import.meta.dirname)
+export const BUILD_SHA = gitSha(import.meta.dirname)
 
 export type Launch =
   | { gateway?: string; mode: "new"; profile?: string; splash?: boolean }
