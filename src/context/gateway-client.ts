@@ -402,8 +402,12 @@ export class GatewayClient extends EventEmitter {
         : undefined
       if (info) this.observe(info)
       if (msg.error) {
-        const err = msg.error as { message?: unknown }
-        p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
+        const err = msg.error as { message?: unknown; data?: { reason?: unknown } }
+        // The gateway's reason code is more useful than "invalid_params": it is what tells apart
+        // a stale generation from a genuinely malformed call.
+        const reason = typeof err?.data?.reason === "string" ? err.data.reason : undefined
+        const text = typeof err?.message === "string" ? err.message : "request failed"
+        p.reject(new Error(reason && reason !== text ? `${text} (${reason})` : text))
       } else {
         this.replay(res, source)
         p.resolve(this.identity(res))
@@ -908,7 +912,21 @@ export class GatewayClient extends EventEmitter {
     "session.steer",
     "session.redirect",
     "session.interrupt",
+    "prompt.replace_queued",
+    "prompt.steer_queued",
   ])
+
+  /** Controls act on the CURRENT turn, so a cached generation goes stale as soon as one starts.
+   *  One in-flight `session.info` refreshes it before the control is sent. */
+  private refreshing: Promise<void> | null = null
+
+  private refreshGeneration(): Promise<void> {
+    if (this.refreshing) return this.refreshing
+    this.refreshing = this.request("session.info", { session_id: this.sid })
+      .then(res => { this.identity(res); this.refreshing = null })
+      .catch(() => { this.refreshing = null })
+    return this.refreshing
+  }
 
   /** Admission identity. The canonical socket refuses `prompt.submit` with `invalid_params`
    *  when `input_id` is missing, and with `permission_denied` when the session is not named.
@@ -953,13 +971,17 @@ export class GatewayClient extends EventEmitter {
     return method
   }
 
-  private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
+  private async remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
     const blocked = backend.contractError(method, this.contract, params)
     if (blocked) return Promise.reject(blocked)
     try { websocketUrl(raw) }
     catch (err) { return Promise.reject(err instanceof Error ? err : new Error(String(err))) }
     if (this.target !== raw || (!this.ws && !this.attaching) || this.ws?.readyState === WS_CLOSING || this.ws?.readyState === WS_CLOSED)
       this.start()
+
+    // A control must carry the turn's CURRENT generation, not the one seen at resume time.
+    if (this.mode !== "stdio" && GatewayClient.CANONICAL_GENERATION.has(method))
+      await this.refreshGeneration()
 
     const wire = this.wireMethod(method)
     const rid = `r${++this.id}`
