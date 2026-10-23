@@ -302,6 +302,8 @@ export class GatewayClient extends EventEmitter {
   private prompts = new Map<string, { kind: "clarify" | "approval"; generation: number; session: string }>()
   /** Execution generation of the live session: canonical controls require it as an integer. */
   private generation: number | null = null
+  /** Session revision, needed as `expected_revision` by every canonical mutation. */
+  private revision: number | null = null
   private buf: GatewayEvent[] = []
   private contract = backend.backendContract(null)
   private declared = loadContract(hermesAgentRoot())
@@ -477,6 +479,7 @@ export class GatewayClient extends EventEmitter {
     // Canonical controls are generation-bound; the snapshot is where a session's generation is
     // published, so it is kept here for every later `session.steer`/`*.respond`.
     if (typeof o.execution_generation === "number") this.generation = o.execution_generation
+    if (typeof o.revision === "number") this.revision = o.revision
     return o
   }
 
@@ -899,11 +902,11 @@ export class GatewayClient extends EventEmitter {
     "session.redirect",
   ])
 
-  /** Methods whose canonical contract also demands the execution generation (an integer). */
+  /** Methods whose canonical contract demands `execution_generation` (an integer). `session.mutate`
+   *  is NOT one of them: it takes `expected_generation`, and an extra key is rejected outright. */
   private static readonly CANONICAL_GENERATION = new Set([
     "session.steer",
     "session.redirect",
-    "session.mutate",
     "session.interrupt",
   ])
 
@@ -929,14 +932,25 @@ export class GatewayClient extends EventEmitter {
     // context but the transcript has nothing to draw.
     if (canonical && method === "session.resume" && out.display_projection === undefined)
       out.display_projection = true
+    // Every canonical mutation carries an idempotency key and the revision/generation it expects.
+    // Sets them unconditionally: a stale value from the caller must not win over the live one.
+    if (canonical && method === "session.mutate") {
+      out.request_id = typeof out.request_id === "string" && out.request_id ? out.request_id : crypto.randomUUID()
+      out.expected_revision = this.revision ?? 0
+      out.expected_generation = this.generation ?? 0
+      out.operation = out.operation ?? "delete"
+      out.payload = out.payload ?? {}
+    }
     return out
   }
 
-  /** The canonical socket has no `session.activate`: attaching to a session is `session.resume`
-   *  (same payload, and it accepts either the runtime id or the stored key). */
+  /** The canonical socket has no `session.delete`: deleting is a `session.mutate` with
+   *  `operation: "delete"` (and it is revision/generation bound). */
   private wireMethod(method: string): string {
     if (this.mode === "stdio") return method
-    return method === "session.activate" ? "session.resume" : method
+    if (method === "session.activate") return "session.resume"
+    if (method === "session.delete") return "session.mutate"
+    return method
   }
 
   private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
