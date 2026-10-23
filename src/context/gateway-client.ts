@@ -444,11 +444,31 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
-  /** The canonical session payload names its identity `session_id` / `stored_session_id`; the
-   *  transcript has always spoken `id` / `key`. Mirror them rather than fork every call site. */
+  /** Store rows → transcript messages. The canonical snapshot returns database rows (`role`,
+   *  `content`), while the transcript renders `parts`; without this a resumed session shows the
+   *  right context with a blank screen. */
+  private history(rows: unknown): unknown {
+    if (!Array.isArray(rows)) return rows
+    return rows.map(row => {
+      const o = rec(row)
+      if (!o) return row
+      if (Array.isArray(o.parts)) return o
+      let text = ""
+      if (typeof o.content === "string") text = o.content
+      else if (typeof o.text === "string") text = o.text
+      else if (Array.isArray(o.content))
+        text = o.content
+          .map(part => (typeof part === "string" ? part : (rec(part)?.text as string | undefined) ?? ""))
+          .join("")
+      const role = typeof o.role === "string" ? o.role : "assistant"
+      return { ...o, role, parts: text ? [{ type: "text", text }] : [] }
+    })
+  }
+
   private identity(res: unknown): unknown {
     const o = rec(res)
     if (!o) return res
+    if (o.messages !== undefined) o.messages = this.history(o.messages)
     if (o.id === undefined && typeof o.session_id === "string") o.id = o.session_id
     if (o.key === undefined && typeof o.stored_session_id === "string") o.key = o.stored_session_id
     // Canonical controls are generation-bound; the snapshot is where a session's generation is
