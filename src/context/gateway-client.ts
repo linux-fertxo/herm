@@ -448,24 +448,23 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
-  /** Store rows → transcript messages. The canonical snapshot returns database rows (`role`,
-   *  `content`), while the transcript renders `parts`; without this a resumed session shows the
-   *  right context with a blank screen. */
+  /** Store rows → transcript rows. The canonical snapshot returns database rows (`role`,
+   *  `content`), while `transcriptToMessages` reads `text`; without this every row is dropped as
+   *  empty and a resumed session shows the right context with a blank screen. */
   private history(rows: unknown): unknown {
     if (!Array.isArray(rows)) return rows
     return rows.map(row => {
       const o = rec(row)
       if (!o) return row
-      if (Array.isArray(o.parts)) return o
+      if (Array.isArray(o.parts) || typeof o.text === "string") return row
       let text = ""
       if (typeof o.content === "string") text = o.content
-      else if (typeof o.text === "string") text = o.text
       else if (Array.isArray(o.content))
         text = o.content
           .map(part => (typeof part === "string" ? part : (rec(part)?.text as string | undefined) ?? ""))
           .join("")
       const role = typeof o.role === "string" ? o.role : "assistant"
-      return { ...o, role, parts: text ? [{ type: "text", text }] : [] }
+      return { ...o, role, text }
     })
   }
 

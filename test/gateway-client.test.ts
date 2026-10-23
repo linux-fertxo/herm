@@ -493,9 +493,10 @@ describe("GatewayClient websocket attach mode", () => {
         },
       }))
       const res = await pending
-      // Database rows become renderable parts; rows already in transcript shape are untouched.
-      expect(res.messages[0].parts).toEqual([{ type: "text", text: "hola" }])
-      expect(res.messages[1].parts).toEqual([{ type: "text", text: "qué tal" }])
+      // Database rows gain a `text` the transcript reads; rows already in transcript shape are
+      // untouched (`parts`) and rows with a text field pass through.
+      expect(res.messages[0].text).toBe("hola")
+      expect(res.messages[1].text).toBe("qué tal")
       expect(res.messages[2].parts).toEqual([{ type: "text", text: "ya venía" }])
       expect(res.id).toBe("local-abc")
       expect(res.key).toBe("local-abc")
