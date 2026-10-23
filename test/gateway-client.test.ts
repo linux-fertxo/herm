@@ -432,6 +432,34 @@ describe("GatewayClient websocket attach mode", () => {
     }
   })
 
+  test("a canonical attach satisfies the contract gate before any prompt", async () => {
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const restoreRoot = installedRoot()
+    const grant = {
+      url: "ws://127.0.0.1:1234/api/ws",
+      protocols: ["hermes-gateway-v1", "hermes-gateway-ticket.tkt"],
+      profile_id: "/home/x/.hermes",
+      instance_id: "abc",
+    }
+    const restore = fakeBootstrap(JSON.stringify(grant))
+    const gw = new GatewayClient()
+    try {
+      gw.start()
+      await Bun.sleep(20)
+      const sock = FakeSocket.list[0]!
+      sock.open()
+      await Bun.sleep(5)
+      // The canonical socket has no `desktop_contract`; a prompt must not hit the legacy gate.
+      void gw.request("prompt.submit", { text: "hi" }).catch(() => {})
+      await Bun.sleep(5)
+      expect(sock.sent.some(frame => frame.includes("prompt.submit"))).toBe(true)
+    } finally {
+      restore()
+      restoreRoot()
+      gw.kill()
+    }
+  })
+
   test("a refused attach surfaces the verdict and never spawns a backend", async () => {
     const verdict = "gateway stopped: not running\nstart it with `hermes gateway start`"
     const restoreRoot = installedRoot()

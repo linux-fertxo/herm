@@ -586,15 +586,22 @@ export class GatewayClient extends EventEmitter {
     // typed session socket that advertises capabilities instead. Once the owner describes itself
     // the legacy gate is satisfied by construction — protocol drift there shows up as `-32601`
     // or a refused handshake, never as a silently misread mutating call.
+    this.adoptCanonicalContract()
+    this.log(`[startup] ready via runtime.describe (already=${this.ok})`)
+    if (this.ok) return
+    this.push({ type: "gateway.ready", payload: { source: "runtime.describe" } } as GatewayEvent)
+  }
+
+  /** Satisfy the legacy contract gate for a canonical socket. Called as soon as the grant exists
+   *  (not after a round-trip): a prompt sent during startup must not hit "contract is missing". */
+  private adoptCanonicalContract() {
+    if (this.contract.supported && this.contract.reason === "supported") return
     this.contract = {
       ...this.contract,
       observedContract: backend.MAX_BACKEND_CONTRACT,
       supported: true,
       reason: "supported",
     }
-    this.log(`[startup] ready via runtime.describe (already=${this.ok})`)
-    if (this.ok) return
-    this.push({ type: "gateway.ready", payload: { source: "runtime.describe" } } as GatewayEvent)
   }
 
   /** Attach to the profile's gateway with a single-use ticket from the install's own bootstrap.
@@ -606,6 +613,8 @@ export class GatewayClient extends EventEmitter {
         const grant = await fetchGrant(this.root(), { start: process.env.HERM_GATEWAY_START === "1" })
         if (this.mode !== "ws") return
         this.grant = grant
+        // Gate satisfied before any RPC can be attempted on this transport.
+        this.adoptCanonicalContract()
         this.connect(grant.url, grant.protocols)
         // The canonical socket has no `gateway.ready` frame: readiness is the owner describing
         // itself. Without this the transcript stays "not ready" while every RPC works.
@@ -646,7 +655,9 @@ export class GatewayClient extends EventEmitter {
     // Reset state
     this.ok = false
     this.buf = []
-    this.contract = backend.backendContract(null)
+    // A canonical attach re-satisfies the gate itself; resetting to "missing" here would make a
+    // retry look like an unknown backend and block every mutating call until the next describe.
+    if (this.mode !== "ws") this.contract = backend.backendContract(null)
     this.exit = undefined
     this.grant = null
 
@@ -774,6 +785,10 @@ export class GatewayClient extends EventEmitter {
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    // Canonical mode has no `desktop_contract` to read, and the gate below runs before any attach
+    // can happen — so it must be satisfied here, or the very first prompt is rejected as an
+    // unknown backend while the transport is still being negotiated.
+    if (this.mode !== "stdio" && !process.env.HERM_OWN_BACKEND) this.adoptCanonicalContract()
     const blocked = backend.contractError(method, this.contract, params)
     if (blocked) return Promise.reject(blocked)
     const raw = gatewayUrl()
