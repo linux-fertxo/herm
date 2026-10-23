@@ -393,7 +393,7 @@ export class GatewayClient extends EventEmitter {
         p.reject(new Error(typeof err?.message === "string" ? err.message : "request failed"))
       } else {
         this.replay(res, source)
-        p.resolve(res)
+        p.resolve(this.identity(res))
       }
       return
     }
@@ -435,6 +435,16 @@ export class GatewayClient extends EventEmitter {
       if (typeof id === "string" && typeof method === "string")
         this.deliver(id, method, rec(req?.params) ?? {}, source)
     }
+  }
+
+  /** The canonical session payload names its identity `session_id` / `stored_session_id`; the
+   *  transcript has always spoken `id` / `key`. Mirror them rather than fork every call site. */
+  private identity(res: unknown): unknown {
+    const o = rec(res)
+    if (!o) return res
+    if (o.id === undefined && typeof o.session_id === "string") o.id = o.session_id
+    if (o.key === undefined && typeof o.stored_session_id === "string") o.key = o.stored_session_id
+    return o
   }
 
   /** Answer an open server→client request by frame id. False when nothing is
@@ -842,6 +852,27 @@ export class GatewayClient extends EventEmitter {
     })
   }
 
+  /** Which methods take `session_id` on the canonical socket (extra="forbid" elsewhere). */
+  private static readonly CANONICAL_SESSION = new Set([
+    "prompt.submit",
+    "prompt.cancel",
+    "session.interrupt",
+    "session.mutate",
+    "session.history",
+  ])
+
+  /** Admission identity. The canonical socket refuses `prompt.submit` with `invalid_params`
+   *  when `input_id` is missing, and with `permission_denied` when the session is not named. */
+  private admitParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...params }
+    const wantsSession = this.declared.session.has(method) || GatewayClient.CANONICAL_SESSION.has(method)
+    if (out.session_id === undefined && this.sid && wantsSession) out.session_id = this.sid
+    if (this.mode !== "stdio" && method === "prompt.submit"
+        && out.input_id === undefined && out.submission_id === undefined)
+      out.input_id = crypto.randomUUID()
+    return out
+  }
+
   private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
     const blocked = backend.contractError(method, this.contract, params)
     if (blocked) return Promise.reject(blocked)
@@ -851,9 +882,7 @@ export class GatewayClient extends EventEmitter {
       this.start()
 
     const rid = `r${++this.id}`
-    const merged = this.sid && params.session_id === undefined && this.declared.session.has(method)
-      ? { session_id: this.sid, ...params }
-      : params
+    const merged = this.admitParams(method, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
