@@ -460,6 +460,34 @@ describe("GatewayClient websocket attach mode", () => {
     }
   })
 
+  test("session.activate travels as session.resume on the canonical socket", async () => {
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const restoreRoot = installedRoot()
+    const grant = {
+      url: "ws://127.0.0.1:1234/api/ws",
+      protocols: ["hermes-gateway-v1", "hermes-gateway-ticket.tkt"],
+      profile_id: "/home/x/.hermes",
+      instance_id: "abc",
+    }
+    const restore = fakeBootstrap(JSON.stringify(grant))
+    const gw = new GatewayClient()
+    try {
+      gw.start()
+      await Bun.sleep(20)
+      const sock = FakeSocket.list[0]!
+      sock.open()
+      await Bun.sleep(5)
+      void gw.request("session.activate", { session_id: "x" }).catch(() => {})
+      await Bun.sleep(5)
+      expect(sock.sent.some(frame => frame.includes("session.resume"))).toBe(true)
+      expect(sock.sent.some(frame => frame.includes("session.activate"))).toBe(false)
+    } finally {
+      restore()
+      restoreRoot()
+      gw.kill()
+    }
+  })
+
   test("a refused attach surfaces the verdict and never spawns a backend", async () => {
     const verdict = "gateway stopped: not running\nstart it with `hermes gateway start`"
     const restoreRoot = installedRoot()

@@ -904,6 +904,13 @@ export class GatewayClient extends EventEmitter {
     return out
   }
 
+  /** The canonical socket has no `session.activate`: attaching to a session is `session.resume`
+   *  (same payload, and it accepts either the runtime id or the stored key). */
+  private wireMethod(method: string): string {
+    if (this.mode === "stdio") return method
+    return method === "session.activate" ? "session.resume" : method
+  }
+
   private remote<T>(raw: string, method: string, params: Record<string, unknown>): Promise<T> {
     const blocked = backend.contractError(method, this.contract, params)
     if (blocked) return Promise.reject(blocked)
@@ -912,8 +919,9 @@ export class GatewayClient extends EventEmitter {
     if (this.target !== raw || (!this.ws && !this.attaching) || this.ws?.readyState === WS_CLOSING || this.ws?.readyState === WS_CLOSED)
       this.start()
 
+    const wire = this.wireMethod(method)
     const rid = `r${++this.id}`
-    const merged = this.admitParams(method, params)
+    const merged = this.admitParams(wire, params)
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -931,7 +939,7 @@ export class GatewayClient extends EventEmitter {
           if (this.ws?.readyState === WS_CONNECTING) await this.link
           if (!this.pending.has(rid)) return
           if (!this.ws || this.ws.readyState !== WS_OPEN) throw new Error(`gateway not connected: ${method}`)
-          const frame = encode({ jsonrpc: "2.0", id: rid, method, params: merged })
+          const frame = encode({ jsonrpc: "2.0", id: rid, method: wire, params: merged })
           if (frame.issues.length) {
             const detail = frame.issues.map(x => `${x.path}:${x.count}`).join(", ")
             this.log(`[wire] sanitized invalid unicode for ${method}: ${detail}`)
