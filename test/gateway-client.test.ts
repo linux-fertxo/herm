@@ -460,6 +460,52 @@ describe("GatewayClient websocket attach mode", () => {
     }
   })
 
+  test("session.resume rows become transcript messages", async () => {
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const restoreRoot = installedRoot()
+    const grant = {
+      url: "ws://127.0.0.1:1234/api/ws",
+      protocols: ["hermes-gateway-v1", "hermes-gateway-ticket.tkt"],
+      profile_id: "/home/x/.hermes",
+      instance_id: "abc",
+    }
+    const restore = fakeBootstrap(JSON.stringify(grant))
+    const gw = new GatewayClient()
+    try {
+      gw.start()
+      await Bun.sleep(20)
+      const sock = FakeSocket.list[0]!
+      sock.open()
+      await Bun.sleep(5)
+      const pending = gw.request("session.resume", { session_id: "x" }) as Promise<any>
+      await Bun.sleep(5)
+      const sent = sock.sent.at(-1)!
+      const rid = JSON.parse(sent).id
+      sock.message(JSON.stringify({
+        jsonrpc: "2.0", id: rid,
+        result: {
+          session_id: "local-abc", stored_session_id: "local-abc", execution_generation: 3,
+          messages: [
+            { role: "user", content: "hola" },
+            { role: "assistant", content: [{ type: "text", text: "qué tal" }] },
+            { role: "assistant", parts: [{ type: "text", text: "ya venía" }] },
+          ],
+        },
+      }))
+      const res = await pending
+      // Database rows become renderable parts; rows already in transcript shape are untouched.
+      expect(res.messages[0].parts).toEqual([{ type: "text", text: "hola" }])
+      expect(res.messages[1].parts).toEqual([{ type: "text", text: "qué tal" }])
+      expect(res.messages[2].parts).toEqual([{ type: "text", text: "ya venía" }])
+      expect(res.id).toBe("local-abc")
+      expect(res.key).toBe("local-abc")
+    } finally {
+      restore()
+      restoreRoot()
+      gw.kill()
+    }
+  })
+
   test("session.activate travels as session.resume on the canonical socket", async () => {
     globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
     const restoreRoot = installedRoot()
