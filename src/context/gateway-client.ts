@@ -299,7 +299,9 @@ export class GatewayClient extends EventEmitter {
   /** Frame ids of server→client requests rendered but not yet answered. */
   private open = new Set<string>()
   /** Prompts announced as events on the canonical socket: answered by RPC, not by a frame reply. */
-  private prompts = new Map<string, { kind: "clarify" | "approval"; generation: string; session: string }>()
+  private prompts = new Map<string, { kind: "clarify" | "approval"; generation: number; session: string }>()
+  /** Execution generation of the live session: canonical controls require it as an integer. */
+  private generation: number | null = null
   private buf: GatewayEvent[] = []
   private contract = backend.backendContract(null)
   private declared = loadContract(hermesAgentRoot())
@@ -449,6 +451,9 @@ export class GatewayClient extends EventEmitter {
     if (!o) return res
     if (o.id === undefined && typeof o.session_id === "string") o.id = o.session_id
     if (o.key === undefined && typeof o.stored_session_id === "string") o.key = o.stored_session_id
+    // Canonical controls are generation-bound; the snapshot is where a session's generation is
+    // published, so it is kept here for every later `session.steer`/`*.respond`.
+    if (typeof o.execution_generation === "number") this.generation = o.execution_generation
     return o
   }
 
@@ -486,9 +491,12 @@ export class GatewayClient extends EventEmitter {
     if (!body || !id) return
     if (body.request_id === undefined) body.request_id = id
     const session = typeof frame?.session_id === "string" ? frame.session_id : this.sid
+    const generation = typeof body.execution_generation === "number"
+      ? body.execution_generation
+      : (this.generation ?? 0)
     this.prompts.set(id, {
       kind: ev.type === "clarify.request" ? "clarify" : "approval",
-      generation: String(body.execution_generation ?? ""),
+      generation,
       session,
     })
   }
@@ -864,15 +872,33 @@ export class GatewayClient extends EventEmitter {
     "session.interrupt",
     "session.mutate",
     "session.history",
+    "session.steer",
+    "session.redirect",
+  ])
+
+  /** Methods whose canonical contract also demands the execution generation (an integer). */
+  private static readonly CANONICAL_GENERATION = new Set([
+    "session.steer",
+    "session.redirect",
+    "session.mutate",
+    "session.interrupt",
   ])
 
   /** Admission identity. The canonical socket refuses `prompt.submit` with `invalid_params`
-   *  when `input_id` is missing, and with `permission_denied` when the session is not named. */
+   *  when `input_id` is missing, and with `permission_denied` when the session is not named.
+   *  `session_id` is injected ONLY for methods whose contract accepts it: elsewhere the strict
+   *  decoder answers `invalid_params` (that is what broke `session.list`). */
   private admitParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = { ...params }
-    const wantsSession = this.declared.session.has(method) || GatewayClient.CANONICAL_SESSION.has(method)
+    const canonical = this.mode !== "stdio"
+    const wantsSession = canonical
+      ? GatewayClient.CANONICAL_SESSION.has(method)
+      : this.declared.session.has(method)
     if (out.session_id === undefined && this.sid && wantsSession) out.session_id = this.sid
-    if (this.mode !== "stdio" && method === "prompt.submit"
+    if (canonical && GatewayClient.CANONICAL_GENERATION.has(method)
+        && out.execution_generation === undefined && this.generation !== null)
+      out.execution_generation = this.generation
+    if (canonical && method === "prompt.submit"
         && out.input_id === undefined && out.submission_id === undefined)
       out.input_id = crypto.randomUUID()
     return out
