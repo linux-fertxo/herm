@@ -403,6 +403,10 @@ export type TranscriptMessage = {
   /** Either a plain string (text-mode, assistant, system) or a list of
    *  OpenAI content parts (native-mode user turns with attached images). */
   text?: string | ContentPart[]
+  /** Razonamiento persistido de un turno ya cerrado. El gateway lo manda en el
+   *  snapshot (`reasoning`/`reasoning_content`); sin esto la cajita se queda sin
+   *  panel de reasoning al reanudar una sesión. */
+  reasoning?: string
   name?: string
   context?: string
 }

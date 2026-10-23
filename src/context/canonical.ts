@@ -52,7 +52,16 @@ export function snapshot(method: string, value: unknown, subscriptions: Map<stri
     || value.display_messages !== undefined && (!Array.isArray(value.display_messages) || !value.display_messages.every(record)))
     throw new Error(`invalid ${method} snapshot`)
   subscriptions.set(value.session_id, { id: value.subscription_id, generation: value.execution_generation })
-  const messages = value.display_messages ?? value.messages?.map(row => ({ ...row, text: text(row.content), name: row.tool_name }))
+  const rows: Record<string, unknown>[] | undefined = value.display_messages
+    ?? value.messages?.map(row => ({ ...row, text: text(row.content), name: row.tool_name }))
+  // El razonamiento viaja como `reasoning` en la proyección y como
+  // `reasoning_content` en la fila cruda; DeepSeek rellena este último con un
+  // espacio cuando el turno no razonó, y un espacio no es razonamiento.
+  const messages = rows?.map(row => {
+    const raw = (typeof row.reasoning === "string" ? row.reasoning : "")
+      || (typeof row.reasoning_content === "string" ? row.reasoning_content : "")
+    return raw.trim() ? { ...row, reasoning: raw } : row
+  })
   return { ...value, session_key: value.stored_session_id ?? value.session_id, messages, info: metadata(value.info) }
 }
 

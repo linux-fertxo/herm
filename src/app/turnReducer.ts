@@ -290,12 +290,24 @@ function flatten(text: TranscriptMessage["text"]): string {
 export function transcriptToMessages(rows: TranscriptMessage[]): Message[] {
   return rows
     .filter(r => r.role === "user" || r.role === "assistant")
-    .map(r => ({ role: r.role, content: sanitize(flatten(r.text)) }))
+    .map(r => {
+      // El razonamiento de un turno cerrado llega en `reasoning` (normalizado en
+      // el cliente desde `reasoning_content`). Si se tira, la pestaña reasoning
+      // de la cajita sale vacía al reanudar o al fijar el mensaje. Un texto en
+      // blanco no cuenta: DeepSeek rellena con un espacio los turnos sin él.
+      const raw = r.role === "assistant" ? sanitize(flatten(r.reasoning ?? "")) : ""
+      return { role: r.role, content: sanitize(flatten(r.text)), think: raw.trim() ? raw : "" }
+    })
     .filter(r => r.content)
     .map(r => ({
       id: mid(),
       role: r.role as "user" | "assistant",
-      parts: [{ type: "text" as const, content: r.content, streaming: false }],
+      parts: [
+        ...(r.think
+          ? [{ type: "thinking" as const, key: pid(), content: r.think, streaming: false }]
+          : []),
+        { type: "text" as const, content: r.content, streaming: false },
+      ],
       timestamp: Date.now() / 1000,
     }))
 }
