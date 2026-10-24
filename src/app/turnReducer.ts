@@ -283,28 +283,40 @@ function flatten(text: TranscriptMessage["text"]): string {
 }
 
 export function transcriptToMessages(rows: TranscriptMessage[]): Message[] {
-  return rows
-    .filter(r => r.role === "user" || r.role === "assistant")
-    .map(r => {
-      // El razonamiento de un turno cerrado llega en `reasoning` (normalizado en
-      // el cliente desde `reasoning_content`). Si se tira, la pestaña reasoning
-      // de la cajita sale vacía al reanudar o al fijar el mensaje. Un texto en
-      // blanco no cuenta: DeepSeek rellena con un espacio los turnos sin él.
-      const raw = r.role === "assistant" ? sanitize(flatten(r.reasoning ?? "")) : ""
-      return { role: r.role, content: sanitize(flatten(r.text)), think: raw.trim() ? raw : "" }
-    })
-    .filter(r => r.content)
-    .map(r => ({
+  const out: Message[] = []
+  // Un turno con herramientas se guarda en VARIAS filas: los pasos intermedios son
+  // assistant con razonamiento pero sin texto visible. Tirarlas se llevaba por delante
+  // su razonamiento (medido: 1.480 chars en el turno, 145 sobrevivían), y en el caso
+  // peor el turno entero se quedaba sin panel de reasoning. Se arrastra al mensaje
+  // visible del mismo turno; un turno nuevo (fila de usuario) lo reinicia.
+  let carry = ""
+  for (const r of rows) {
+    if (r.role !== "user" && r.role !== "assistant") continue
+    if (r.role === "user") carry = ""
+    // El razonamiento de un turno cerrado llega en `reasoning` (normalizado en el
+    // cliente desde `reasoning_content`). Un texto en blanco no cuenta: DeepSeek
+    // rellena con un espacio los turnos sin él.
+    const own = r.role === "assistant" ? sanitize(flatten(r.reasoning ?? "")).trim() : ""
+    const text = sanitize(flatten(r.text))
+    if (!text) {
+      if (own) carry = carry ? `${carry}\n\n${own}` : own
+      continue
+    }
+    const think = r.role === "assistant" ? [carry, own].filter(Boolean).join("\n\n") : ""
+    out.push({
       id: mid(),
       role: r.role as "user" | "assistant",
       parts: [
-        ...(r.think
-          ? [{ type: "thinking" as const, key: pid(), content: r.think, streaming: false }]
+        ...(think
+          ? [{ type: "thinking" as const, key: pid(), content: think, streaming: false }]
           : []),
-        { type: "text" as const, content: r.content, streaming: false },
+        { type: "text" as const, content: text, streaming: false },
       ],
       timestamp: Date.now() / 1000,
-    }))
+    })
+    carry = ""
+  }
+  return out
 }
 
 function assistant(parts: Part[]): Message {

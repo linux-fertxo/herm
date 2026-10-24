@@ -285,4 +285,28 @@ describe("transcriptToMessages", () => {
     const ms = transcriptToMessages([{ role: "assistant", text: "Hola.", reasoning: " " }])
     expect(kinds(ms[0].parts)).toEqual(["text"])
   })
+
+  // Un turno con herramientas deja filas assistant con razonamiento pero SIN texto
+  // (los pasos intermedios). Descartarlas se llevaba su razonamiento: el globo del
+  // turno se quedaba vacío o solo con el último trozo.
+  test("el razonamiento de las filas sin texto se arrastra al mensaje visible del turno", () => {
+    const ms = transcriptToMessages([
+      { role: "user", text: "mira la carga" },
+      { role: "assistant", text: "", reasoning: "Primero miro uptime." },
+      { role: "tool", name: "terminal", context: "uptime" },
+      { role: "assistant", text: "", reasoning: "Ahora la memoria." },
+      { role: "assistant", text: "La carga es baja.", reasoning: "Cierro el turno." },
+      { role: "user", text: "gracias" },
+      { role: "assistant", text: "De nada." },
+    ])
+    expect(ms).toHaveLength(4)
+    expect(kinds(ms[1].parts)).toEqual(["thinking", "text"])
+    expect(ms[1].parts[0]).toMatchObject({
+      type: "thinking",
+      content: "Primero miro uptime.\n\nAhora la memoria.\n\nCierro el turno.",
+      streaming: false,
+    })
+    // El turno siguiente no hereda el razonamiento del anterior.
+    expect(kinds(ms[3].parts)).toEqual(["text"])
+  })
 })
