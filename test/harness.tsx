@@ -90,6 +90,9 @@ export class MockGateway extends EventEmitter implements Gateway {
     this.mode = opts.mode ?? (env === "compat" || env === "audit" ? env : "strict")
     // Sane defaults so <App> boots without hanging.
     this.on$("session.create", () => ({ session_id: "test-sid", info: { desktop_contract: 4 } }))
+    // El boot hidrata los metadatos con un `session.info` explícito (el evento homónimo
+    // no llega en ese camino); un gateway real contesta siempre.
+    this.on$("session.info", () => ({ model: "test-model", session_id: "test-sid", tools: {}, skills: {}, desktop_contract: 4 }))
     this.on$("config.get", p => p.key === "full" ? { config: {} } : {})
     this.on$("commands.catalog", () => ({ pairs: [] }))
     for (const [m, h] of Object.entries(handlers)) this.on$(m, h)

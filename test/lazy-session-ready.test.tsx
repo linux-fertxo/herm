@@ -9,6 +9,9 @@ describe("lazy session startup", () => {
         session_id: "lazy-sid",
         info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
+      // El boot hidrata los metadatos con un `session.info` explícito; sin este
+      // handler el mock devolvería su modelo por defecto y taparía el de create.
+      "session.info": () => ({ model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 }),
       "prompt.submit": () => ({ status: "streaming" }),
     })
     gw.start = () => {
@@ -17,7 +20,7 @@ describe("lazy session startup", () => {
     }
 
     const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Connecting") && t.frame().includes("lazy-model"))
+    await until(t, () => t.frame().includes("lazy-model"))
 
     await act(async () => { await t.keys.typeText("hello while lazy") })
     act(() => t.keys.pressEnter())
@@ -36,6 +39,9 @@ describe("lazy session startup", () => {
         session_id: "lazy-sid",
         info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
+      // El boot hidrata los metadatos con un `session.info` explícito; sin este
+      // handler el mock devolvería su modelo por defecto y taparía el de create.
+      "session.info": () => ({ model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 }),
       "commands.catalog": () => ({ pairs: [["/review", "Review with skill"]] }),
       "slash.exec": () => { throw new Error("fall through") },
       "command.dispatch": () => ({ type: "skill", name: "review", message: "Load review skill and continue" }),
@@ -47,7 +53,7 @@ describe("lazy session startup", () => {
     }
 
     const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Connecting") && t.frame().includes("lazy-model"))
+    await until(t, () => t.frame().includes("lazy-model"))
     await until(t, () => Boolean(t.gw.last("commands.catalog")))
 
     await act(async () => { await t.keys.typeText("/review") })
@@ -75,6 +81,9 @@ describe("lazy session startup", () => {
         session_id: "lazy-sid",
         info: { model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 },
       }),
+      // El boot hidrata los metadatos con un `session.info` explícito; sin este
+      // handler el mock devolvería su modelo por defecto y taparía el de create.
+      "session.info": () => ({ model: "lazy-model", session_id: "lazy-sid", tools: {}, skills: {}, lazy: true, desktop_contract: 4 }),
       "prompt.submit": () => ({ status: "streaming" }),
     })
     gw.start = () => {
@@ -83,7 +92,7 @@ describe("lazy session startup", () => {
     }
 
     const t = await mount({ gw })
-    await until(t, () => t.frame().includes("Connecting") && t.frame().includes("lazy-model"))
+    await until(t, () => t.frame().includes("lazy-model"))
 
     act(() => {
       t.gw.push({ type: "message.start" })

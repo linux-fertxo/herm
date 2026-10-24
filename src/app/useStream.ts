@@ -146,6 +146,16 @@ export function useStream(c: Ctx) {
       if (STREAM_EVENTS.has(ev.type)) return
       if (ev.type === "status.update" && ev.payload?.kind === "lifecycle") return
     }
+    // El razonamiento NO siempre llega en deltas. Medido por el socket canónico con
+    // deepseek-flash: un turno con herramientas puede emitir CERO `reasoning.delta`
+    // (el texto va solo como `thinking.delta`, que es la línea de estado del spinner)
+    // y entregar el razonamiento completo de una vez en `message.complete.reasoning`.
+    // Sin esta rama el part `thinking` no existe nunca y la cajita queda vacía: se
+    // puede pulsar la pestaña reasoning y no sale nada. El reducer lo trata como
+    // `final`, así que si ya había deltas conserva lo acumulado.
+    const closeReasoning = ev.type === "message.complete" && typeof ev.payload?.reasoning === "string"
+      ? ev.payload.reasoning
+      : ""
     const action = mapEvent(ev, {
       onReady: () => {
         x.session.boot(x.launchRef.current).then((r) => {
@@ -155,6 +165,22 @@ export function useStream(c: Ctx) {
           x.sessionStart.current = Date.now()
           if (r.messages.length) x.dispatch({ kind: "load", messages: r.messages })
           if (r.note) toast.show({ variant: "info", message: r.note })
+          // `ready` significa «metadatos hidratados», y eso lo daba el evento
+          // `session.info`, que en este camino NO llega: el gateway lo emite antes de
+          // que esta conexión esté suscrita a la sesión. Medido con el cliente real:
+          // `ready:false` para siempre y el composer en «Connecting...» aunque el chat
+          // funcione. Si el boot no trajo metadatos (create/resume perezoso) se piden
+          // explícitamente; si ya vinieron, NO se sobrescriben (el snapshot del boot
+          // manda, p. ej. para el contrato del backend).
+          gw.request<SessionInfo>("session.info")
+            .then(si => {
+              if (r.info || !si) return
+              x.setInfo(si)
+              if (si.usage) x.setUsage(si.usage)
+              if (si.title !== undefined) x.setTitle(si.title)
+            })
+            .catch(() => {})
+            .finally(() => { x.setReady(true); x.setStarting(false); x.setStatus("") })
         }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err)
           gw.setSession("")
@@ -246,6 +272,11 @@ export function useStream(c: Ctx) {
       return
     }
     flush()
+    // El razonamiento de cierre va DESPUÉS de vaciar los deltas pendientes: si no,
+    // el texto final se colaba delante de los deltas y el orden del panel se rompía.
+    // Como `final` conserva lo acumulado, si hubo deltas estos mandan.
+    if (closeReasoning.trim())
+      x.dispatch({ kind: "thinking", text: closeReasoning, final: true })
     if (action.kind === "message.start") {
       x.setStarting(false)
       x.setStatus("")

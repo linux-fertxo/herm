@@ -3,6 +3,45 @@ import { act } from "react"
 import { mount, until, MockGateway } from "./harness"
 
 describe("live session event routing", () => {
+  // El boot resuelve la sesión en la RESPUESTA del RPC y el evento `session.info` no
+  // llega en ese camino: si el cliente no marca ready, el composer se queda en
+  // «Connecting...» para siempre aunque el chat funcione. El mock por defecto empuja
+  // `session.info` en start(), que es justo lo que el gateway real NO hace aquí.
+  test("bare launch deja la sesión lista (sin Connecting... eterno)", async () => {
+    const gw = new MockGateway()
+    gw.start = () => { gw.ok = true; gw.push({ type: "gateway.ready" }) }
+    const t = await mount({ gw, launch: { mode: "new", splash: false } })
+    await until(t, () => t.frame().includes("Ready"))
+    expect(t.frame()).not.toContain("Connecting...")
+    t.destroy()
+  })
+
+  // Medido por el socket canónico con deepseek-flash: un turno con herramientas puede
+  // emitir CERO reasoning.delta (el texto va como thinking.delta, que es el spinner) y
+  // entregar todo el razonamiento en message.complete.reasoning. Sin esa rama la
+  // pestaña reasoning de la cajita queda vacía para siempre.
+  test("el razonamiento que llega en message.complete se pinta en la cajita", async () => {
+    const gw = new MockGateway({
+      "session.resume": p => ({ session_id: p.session_id, messages: [] }),
+    })
+    const t = await mount({ gw, launch: { mode: "resume", sid: "sid-r", splash: false } })
+    await until(t, () => t.frame().includes("Ready"))
+
+    act(() => {
+      t.gw.push({ type: "message.start", session_id: "sid-r" })
+      t.gw.push({ type: "tool.start", session_id: "sid-r", payload: { tool_id: "t1", name: "terminal", context: "uptime" } })
+      t.gw.push({ type: "tool.complete", session_id: "sid-r", payload: { tool_id: "t1", summary: "ok" } })
+      t.gw.push({
+        type: "message.complete", session_id: "sid-r",
+        payload: { text: "La carga es baja.", reasoning: "RAZONAMIENTO-SOLO-EN-EL-CIERRE" },
+      })
+    })
+    // Un turno nuevo abre la cajita; el último assistant es el anterior, con su thinking.
+    act(() => { t.gw.push({ type: "message.start", session_id: "sid-r" }) })
+    await until(t, () => t.frame().includes("RAZONAMIENTO-SOLO-EN-EL-CIERRE"))
+    t.destroy()
+  })
+
   test("ignores sibling session stream events after activating another session", async () => {
     const gw = new MockGateway({
       "session.resume": p => ({
