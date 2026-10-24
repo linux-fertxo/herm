@@ -94,7 +94,11 @@ export function useSession(): SessionOps {
   // payload.rendered field that herm ignores, plus render_diff for the
   // checkpoint diff RPC — both default-80 is fine for our flow.
   const create = useCallback(async () => {
-    const res = await gw.request<SessionCreateResponse>("session.create", {})
+    // `source: "tui"` NO es cosmético: es la superficie que el gateway usa para resolver el
+    // display de la sesión. Sin él, sus sesiones no emiten `reasoning.delta` (medido: cero
+    // eventos y el razonamiento llegando de golpe en el cierre) y la cajita se queda sin
+    // razonamiento en vivo aunque el modelo lo esté produciendo.
+    const res = await gw.request<SessionCreateResponse>("session.create", { source: "tui" })
     const key = res.stored_session_id ?? res.session_id
     gw.setSession(res.session_id)
     preferences.set("lastSessionId", key)

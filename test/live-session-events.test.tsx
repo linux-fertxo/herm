@@ -3,6 +3,18 @@ import { act } from "react"
 import { mount, until, MockGateway } from "./harness"
 
 describe("live session event routing", () => {
+  // `session.create` sin `source` deja la sesión como «plataforma»: medido por el socket
+  // canónico, no emite ni un `reasoning.delta` (el razonamiento llega entero en el cierre).
+  // Con `source: "tui"` sí streamea, que es lo que pinta el globo en vivo.
+  test("create marca la sesión como superficie tui", async () => {
+    const gw = new MockGateway()
+    gw.start = () => { gw.ok = true; gw.push({ type: "gateway.ready" }) }
+    const t = await mount({ gw, launch: { mode: "new", splash: false } })
+    await until(t, () => t.frame().includes("Ready"))
+    expect(t.gw.last("session.create")?.params).toMatchObject({ source: "tui" })
+    t.destroy()
+  })
+
   // El boot resuelve la sesión en la RESPUESTA del RPC y el evento `session.info` no
   // llega en ese camino: si el cliente no marca ready, el composer se queda en
   // «Connecting...» para siempre aunque el chat funcione. El mock por defecto empuja
