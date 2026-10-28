@@ -23,6 +23,17 @@ across shell commands, config files, and browser windows.
 - **Make the shell yours** with rebindable keys, a command palette, slash
   commands, theme picker, and profile switching.
 
+## This fork
+
+This fork tracks [`liftaris/herm`](https://github.com/liftaris/herm) `dev` and adds only what upstream does not have yet:
+
+- the reasoning panel shows reasoning that arrives **without deltas** (providers such as DeepSeek send it once, after the tool calls)
+- reasoning stored as `reasoning_content` comes back when a session is **resumed**
+- a reasoning text that is only whitespace is not treated as reasoning
+- the splash prints the **build SHA** next to the version, so two bundles are never confused
+
+No npm package is published from here: build with `bun run build`. The older self-contained rescue (before adopting upstream `#267`/`#263`) is kept at the tag `rescue/pre-upstream-6e15ecf`.
+
 Herm is built with [OpenTUI](https://github.com/anomalyco/opentui) and
 [Bun](https://bun.sh/). It is a client for the Hermes Agent gateway, not a
 separate agent runtime.
