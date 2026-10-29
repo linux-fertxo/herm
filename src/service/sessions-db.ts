@@ -184,6 +184,10 @@ const top = (s: string) =>
   `(${s}.parent_session_id IS NULL OR EXISTS (SELECT 1 FROM sessions p ` +
   `WHERE p.id = ${s}.parent_session_id AND ${branch(s, "p")}))`
 const listable = (s: string) => `(NOT (${delegated(s)}) AND ${top(s)})`
+// El gateway escribe `source='local'` en TODA sesión que nace en un cliente nativo y deja el origen
+// real en `created_source` (='tui'/'cli'). Filtrar por `source` dejaba fuera todas las del gateway y
+// `lastReal()` proponía una sesión vieja: el splash se queda con la última conversación pre-gateway.
+const native = (c: string) => `COALESCE(NULLIF(${c}.created_source, ''), ${c}.source) IN ('tui', 'cli')`
 const active = (s: string) =>
   `COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = ${s}.id), ${s}.started_at)`
 const order = (c: string) =>
@@ -295,7 +299,7 @@ export const lastReal = (): SessionRow | undefined => {
   const hit = q(`
     WITH RECURSIVE chain(root_id, cur_id) AS (
       SELECT s.id, s.id FROM sessions s
-      WHERE s.source IN ('tui', 'cli') AND ${listable("s")}
+      WHERE ${native("s")} AND ${listable("s")}
       UNION ALL
       SELECT c.root_id, child.id
       FROM chain c
@@ -305,7 +309,7 @@ export const lastReal = (): SessionRow | undefined => {
     ), stats AS (
       SELECT c.root_id,
              MAX(${active("s")}) AS tick,
-             MAX(CASE WHEN s.source IN ('tui', 'cli') AND s.message_count > 0 THEN 1 ELSE 0 END) AS real
+             MAX(CASE WHEN ${native("s")} AND s.message_count > 0 THEN 1 ELSE 0 END) AS real
       FROM chain c
       JOIN sessions s ON s.id = c.cur_id
       GROUP BY c.root_id
