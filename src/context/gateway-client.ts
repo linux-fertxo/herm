@@ -35,6 +35,20 @@ type Pending = {
   reject: (e: Error) => void
 }
 
+// Métodos que NO aceptan `session_id`: el decodificador del gateway es `extra="forbid"`, así que
+// inyectarlo ahí devuelve 4000 «Extra»/4001 y la pestaña sale vacía (Skills, MCP, Insights, uso).
+// Medido con una sonda WS (sin sid → ok, con sid → error) contra el gateway actual; ampliar solo
+// lo que la sonda marque, nunca por lo que parezca del manifiesto (va pinneado y miente).
+const NO_SESSION_ID = [
+  "runtime.describe", "client.capabilities", "gateway.ping", "session.create",
+  "skills.manage", "mcp.catalog", "insights.get", "usage.bars", "plugins.list", "commands.catalog",
+  // session.list acepta {scope, limit, title, include_hidden} y NO session_id: con la inyección
+  // responde 4001 y la pestaña Sessions pinta «gateway session.list failed».
+  "session.list",
+  // session.active_list solo admite current_session_id.
+  "session.active_list",
+]
+
 export function gatewayUrl(): string | null {
   return process.env.HERM_GATEWAY_URL?.trim()
     || process.env.HERMES_TUI_GATEWAY_URL?.trim()
@@ -409,7 +423,7 @@ export class GatewayClient extends EventEmitter {
     if (generation !== this.generation) throw new Error("gateway restarted")
     const contract = this.native && method === "session.create" ? await this.describe() : null
     if (generation !== this.generation || this.stopped) throw new Error("gateway restarted")
-    const merged = this.sid && params.session_id === undefined && !["runtime.describe", "client.capabilities", "gateway.ping", "session.create"].includes(method)
+    const merged = this.sid && params.session_id === undefined && !NO_SESSION_ID.includes(method)
       ? { session_id: this.sid, ...params } : params
     const frame = this.native ? canonical.prepare(method, merged, contract, this.subscriptions) : { method, params: merged }
     const rid = `r${++this.id}`
