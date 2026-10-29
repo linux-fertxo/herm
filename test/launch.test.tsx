@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterAll } from "bun:test"
+import { describe, test, expect, beforeEach, beforeAll, afterAll } from "bun:test"
 import { parseLaunch, type Launch } from "../src/app/launch"
 import { openStateDb } from "./fixtures/state-db"
 import { resetDb, lastReal, byId } from "../src/service/sessions-db"
@@ -96,6 +96,22 @@ describe("lastReal / byId", () => {
     expect(byId("stub")?.message_count).toBe(0)
     expect(byId("real")?.message_count).toBe(7)
     expect(byId("nope")).toBeNull()
+  })
+})
+
+describe("lastReal / gateway-stamped rows", () => {
+  beforeAll(() => {
+    const db = seed()
+    sess(db, "old", "tui", 1001, 2)
+    sess(db, "gw", "local", 1003, 5, { created_source: "tui" })     // ← target
+    sess(db, "msg", "local", 1004, 5, { created_source: "telegram" }) // local, pero no nativa
+    db.close()
+    resetDb()
+  })
+  afterAll(wipe)
+
+  test("una sesión source='local' con created_source='tui' cuenta como última", () => {
+    expect(lastReal()?.id).toBe("gw")
   })
 })
 
