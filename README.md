@@ -31,6 +31,8 @@ This fork tracks [`liftaris/herm`](https://github.com/liftaris/herm) `dev` and a
 - reasoning stored as `reasoning_content` comes back when a session is **resumed**
 - a reasoning text that is only whitespace is not treated as reasoning
 - the splash prints the **build SHA** next to the version, so two bundles are never confused
+- tabs that ask the gateway for global data (skills, MCP, insights, usage) no longer send a `session_id` the decoder rejects (`4000 Extra`), which left them empty
+- **resume last** (`herm -c` and the splash prompt) reads `created_source`, so the sessions the gateway stamps `source='local'` still count as TUI sessions
 
 No npm package is published from here: build with `bun run build`. The older self-contained rescue (before adopting upstream `#267`/`#263`) is kept at the tag `rescue/pre-upstream-6e15ecf`.
 
