@@ -42,7 +42,6 @@ function backend(open: Frame[] = []) {
             case "commands.catalog": return { pairs: [] }
             case "session.title": return { title: "" }
             case "delegation.status": return { active: [] }
-            case "agents.list": return { processes: [] }
             case "approval.received": return { acknowledged: true }
             case "session.branch": return { session_id: "protocol-sid" }
             case "session.close": return { closed: true }
@@ -107,8 +106,9 @@ test("contract 8 sends prompts and cards answer the server request IDs without r
   act(() => t.keys.pressEnter())
   await until(t, () => b.frames.some(f => f.id === "srq-clarify"))
   expect(b.frames.filter(f => f.method === "clarify.lock").map(f => f.params)).toEqual([
-    { session_id: "protocol-sid", request_id: "srq-clarify", question_id: "color", answer: "blue" },
-    { session_id: "protocol-sid", request_id: "srq-clarify", question_id: "targets", answer: "linux, mac" },
+    // clarify.lock declara {request_id, question_id, answer}: el session_id inyectado daba 4001.
+    { request_id: "srq-clarify", question_id: "color", answer: "blue" },
+    { request_id: "srq-clarify", question_id: "targets", answer: "linux, mac" },
   ])
   expect(b.frames.find(f => f.id === "srq-clarify")?.result).toEqual({ answers: { color: "blue", targets: "linux, mac", note: null }, outcome: "submitted" })
 

@@ -13,8 +13,8 @@ describe("explicit remote dashboard background ownership", () => {
   test("switchSession preserves prev while a background process runs", async () => {
     const gw = new MockGateway({
       "commands.catalog": () => ({ pairs: [["/resume", "resume session"]] }),
-      "agents.list": () => ({ processes: [
-        { session_id: "proc_watch", command: "watch", status: "running", uptime: 1 },
+      "delegation.status": () => ({ active: [
+        { subagent_id: "proc_watch", goal: "watch", status: "running" },
       ] }),
       "session.resume": p => ({ session_id: p.session_id, messages: [] }),
     })
@@ -23,7 +23,7 @@ describe("explicit remote dashboard background ownership", () => {
 
     await act(async () => { await t.keys.typeText("/resume second") })
     act(() => t.keys.pressEnter())
-    await until(t, () => gw.last("agents.list") !== undefined)
+    await until(t, () => gw.last("delegation.status") !== undefined)
 
     expect(gw.calls.some(c => c.method === "session.resume" && c.params.session_id === "second")).toBe(true)
     expect(t.gw.last("session.close")).toBeUndefined()
@@ -33,7 +33,7 @@ describe("explicit remote dashboard background ownership", () => {
   test("switchSession preserves prev when background ownership is unknown", async () => {
     const gw = new MockGateway({
       "commands.catalog": () => ({ pairs: [["/resume", "resume session"]] }),
-      "agents.list": () => { throw new Error("agents unavailable") },
+      "delegation.status": () => { throw new Error("delegation unavailable") },
       "session.resume": p => ({ session_id: p.session_id, messages: [] }),
     })
     await using t = await mount({ gw, launch: { mode: "resume", sid: "first", splash: false } })
@@ -41,7 +41,7 @@ describe("explicit remote dashboard background ownership", () => {
 
     await act(async () => { await t.keys.typeText("/resume second") })
     act(() => t.keys.pressEnter())
-    await until(t, () => gw.last("agents.list") !== undefined)
+    await until(t, () => gw.last("delegation.status") !== undefined)
     expect(gw.calls.some(call => call.method === "session.resume" && call.params.session_id === "second")).toBe(true)
     expect(gw.last("session.close")).toBeUndefined()
   })
@@ -50,8 +50,8 @@ describe("explicit remote dashboard background ownership", () => {
     let n = 0
     const gw = new MockGateway({
       "commands.catalog": () => ({ pairs: [["/new", "new session"]] }),
-      "agents.list": () => ({ processes: [
-        { session_id: "proc_watch", command: "watch", status: "running", uptime: 1 },
+      "delegation.status": () => ({ active: [
+        { subagent_id: "proc_watch", goal: "watch", status: "running" },
       ] }),
       "session.create": () => ({ session_id: `sid-${++n}` }),
     })
@@ -61,7 +61,7 @@ describe("explicit remote dashboard background ownership", () => {
     await act(async () => { await t.keys.typeText("/new now") })
     act(() => t.keys.pressEnter())
     await until(t, () => gw.calls.filter(c => c.method === "session.create").length >= 2)
-    await until(t, () => gw.last("agents.list") !== undefined)
+    await until(t, () => gw.last("delegation.status") !== undefined)
 
     expect(t.gw.last("session.close")).toBeUndefined()
 

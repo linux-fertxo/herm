@@ -44,7 +44,7 @@ type CompressResult = {
 type Booted = { id: string; key: string; messages: Message[]; note?: string; info?: SessionInfo }
 type Resumed = { id: string; key: string; messages: Message[]; info?: SessionInfo }
 type Activated = { id: string; key: string; messages: Message[]; info?: SessionInfo; running: boolean; status?: string; startedAt?: number }
-type Agents = { processes?: Array<{ status?: string }> }
+type Agents = { active?: Array<{ status?: string }> }
 type Close = { preserveBackground?: boolean }
 
 export const normalize = (sid: string): string =>
@@ -131,8 +131,10 @@ export function useSession(): SessionOps {
 
   const busy = useCallback(async () => {
     try {
-      const res = await gw.request<Agents>("agents.list")
-      return res.processes?.some(p => p.status === "running") ?? false
+      // `agents.list` no existe en el socket canónico: los hijos vivos (los que
+      // hacían de "background") se preguntan a delegation.status.
+      const res = await gw.request<Agents>("delegation.status")
+      return (res.active?.length ?? 0) > 0
     } catch { return true }
   }, [gw])
 

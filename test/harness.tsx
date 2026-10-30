@@ -42,7 +42,6 @@ const preset: Record<string, Handler> = {
   "session.list": () => ({ sessions: [] }),
   "session.active_list": () => ({ sessions: [] }),
   "session.activate": p => ({ session_id: p.session_id ?? "test-sid", messages: [], status: "idle", info: { desktop_contract: 4 } }),
-  "agents.list": () => ({ processes: [] }),
   "delegation.status": () => ({ active: [], paused: false, max_spawn_depth: 2, max_concurrent_children: 3 }),
   "complete.path": () => ({ items: [] }),
   "complete.slash": () => ({ items: [] }),
