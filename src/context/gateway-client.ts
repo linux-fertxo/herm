@@ -47,6 +47,12 @@ const NO_SESSION_ID = [
   "session.list",
   // session.active_list solo admite current_session_id.
   "session.active_list",
+  // Estos declaran params SIN session_id y el decodificador es extra="forbid", así que
+  // inyectarlo los dejaba en 4000 y el fallback silencioso se lo comía: el paste grande
+  // no se colapsaba, y las pestañas de cron/journey/agents salían vacías.
+  "paste.collapse", "cli.exec", "cron.manage", "delegation.status", "delegation.pause",
+  "clarify.lock", "request.answer",
+  "learning.frames", "learning.detail", "learning.edit", "learning.delete", "spawn_tree.load",
 ]
 
 export function gatewayUrl(): string | null {

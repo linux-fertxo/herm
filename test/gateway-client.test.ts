@@ -73,6 +73,35 @@ describe("GatewayClient websocket attach mode", () => {
     gw.kill()
   })
 
+  test("methods whose params forbid session_id go out without it", async () => {
+    process.env.HERM_GATEWAY_URL = "ws://gateway.test/api/ws"
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket
+    const gw = new GatewayClient()
+
+    gw.request("session.create").catch(() => {})
+    await Promise.resolve()
+    const ws = FakeSocket.list[0]!
+    ws.open()
+    await Bun.sleep(0)
+    gw.setSession("local-x")
+    ws.sent.length = 0
+
+    // paste.collapse/cli.exec declaran {text}/{argv}; prompt.submit sí lleva sesión.
+    gw.request("paste.collapse", { text: "a\nb" }).catch(() => {})
+    gw.request("cli.exec", { argv: ["ls"] }).catch(() => {})
+    gw.request("prompt.submit", { text: "hola" }).catch(() => {})
+    await Bun.sleep(0)
+
+    const frames = ws.sent.map(s => JSON.parse(s) as { method?: string; params?: Record<string, unknown> })
+    const params = (method: string) => frames.find(f => f.method === method)?.params
+    expect(params("paste.collapse")).toEqual({ text: "a\nb" })
+    expect(params("cli.exec")).toEqual({ argv: ["ls"] })
+    expect(params("prompt.submit")?.session_id).toBe("local-x")
+
+    gw.kill()
+    await Bun.sleep(0)
+  })
+
   test("times out an unanswered websocket request", async () => {
     globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => (
       timer(args[0], args[1] === 120_000 ? 0 : args[1], ...args.slice(2))
