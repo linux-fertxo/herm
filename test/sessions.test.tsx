@@ -138,7 +138,7 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("Ctrl+R renames active session via session.title", async () => {
+  test("Ctrl+R renames active session via session.mutate", async () => {
     const calls: Array<[string, string]> = []
     const gw = new MockGateway({
       "session.active_list": () => ({ sessions: [
@@ -147,7 +147,7 @@ describe("Sessions tab", () => {
       "session.list": () => ({ sessions: [
         { id: "past", title: "Past Root", preview: "hello", message_count: 2, started_at: 1700000000, source: "tui" },
       ]}),
-      "session.title": p => ({ title: p.title }),
+      "session.mutate": p => ({ title: (p.payload as { title?: string }).title }),
     })
     const disk = [detail({ id: "past", sessionSource: "tui", title: "Past Root", message_count: 2, started_at: 1700000000 })]
     const rename = (sid: string, title: string) => { calls.push([sid, title]); return false }
@@ -161,7 +161,9 @@ describe("Sessions tab", () => {
     act(() => t.keys.pressEnter())
     await until(t, () => t.frame().includes("Renamed Active"))
 
-    expect(gw.last("session.title")?.params).toEqual({ session_id: "live-past", title: "Renamed Active" })
+    expect(gw.last("session.mutate")?.params).toMatchObject({
+      session_id: "live-past", operation: "rename", payload: { title: "Renamed Active" },
+    })
     expect(calls).toEqual([])
     expect(t.frame()).not.toContain("Past Root")
     t.destroy()

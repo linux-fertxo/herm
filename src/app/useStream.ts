@@ -107,11 +107,12 @@ export function useStream(c: Ctx) {
   const sync = useCallback((ms = 0) => {
     const sid = ctx.current.sidRef.current
     if (!sid) return
-    const run = () => gw.request<{ title?: string; session_key?: string }>("session.title", { session_id: sid })
+    // The canonical socket has no `session.title` read; the title lives in
+    // session.info (which carries no stored id — the boot event already stored it).
+    const run = () => gw.request<{ title?: string }>("session.info", { session_id: sid })
       .then(r => {
         if (ctx.current.sidRef.current !== sid) return
         ctx.current.setTitle(r.title ?? "")
-        store(r.session_key)
       })
       .catch(() => {})
     if (ms <= 0) return run()

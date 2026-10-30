@@ -28,6 +28,7 @@ import { openRollback } from "../dialogs/rollback"
 import { openHistory } from "../dialogs/history"
 import { openStatus, openUsage, openProfile } from "../dialogs/info"
 import { openChafa } from "../dialogs/chafa"
+import * as sdb from "../service/sessions-db"
 import { skins, mode as skinMode, type SkinState } from "../context/skin"
 import { copyText as clipCopy } from "../utils/clipboard"
 import * as preferences from "../context/preferences"
@@ -189,10 +190,21 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
     openEikonPicker(dialog, (n) => preferences.set("eikon", n)), [dialog])
 
   const applyTitle = useCallback((t: string) => {
-    gw.request<{ title: string }>("session.title", { title: t })
+    // `session.title` no existe en el socket canónico: renombrar es un
+    // `session.mutate` (metadata), fenced por la revisión de la fila.
+    const id = ctx.current.resumeId
+    const f = id ? sdb.fence(id) : null
+    const req = f
+      ? gw.request<{ title?: string }>("session.mutate", {
+        session_id: id, request_id: crypto.randomUUID(), expected_revision: f.revision,
+        operation: "rename", payload: { title: t },
+      })
+      : gw.request<{ title?: string }>("session.title", { title: t })
+    req
       .then(r => {
-        ctx.current.setTitle(r.title)
-        ctx.current.dispatch({ kind: "system", text: `Title: ${r.title}` })
+        const title = r.title ?? t
+        ctx.current.setTitle(title)
+        ctx.current.dispatch({ kind: "system", text: `Title: ${title}` })
       })
       .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
   }, [gw, toast])

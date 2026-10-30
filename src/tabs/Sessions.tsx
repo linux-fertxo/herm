@@ -919,6 +919,19 @@ export const Sessions = memo((props: Props) => {
   }, [gw, io, dialog, toast, load])
   confirmDeleteRef.current = confirmDelete
 
+  // The canonical socket has no `session.title`: renaming is a `session.mutate`
+  // (metadata, so no generation fence). Without a state.db row the old RPC stays.
+  const retitle = useCallback(async (id: string, title: string): Promise<string> => {
+    const f = io.fence(id)
+    const r = f
+      ? await gw.request<{ title?: string }>("session.mutate", {
+        session_id: id, request_id: crypto.randomUUID(), expected_revision: f.revision,
+        operation: "rename", payload: { title },
+      })
+      : await gw.request<{ title?: string }>("session.title", { session_id: id, title })
+    return r.title ?? title
+  }, [gw, io])
+
   const rename = useCallback(async () => {
     const v = live.current.visible[sel]
     // Rename only operates on parent rows — subagent children don't
@@ -932,9 +945,7 @@ export const Sessions = memo((props: Props) => {
     if (name === null) return
     Promise.resolve()
       .then(async () => {
-        const title = r.live
-          ? (await gw.request<{ title?: string }>("session.title", { session_id: r.id, title: name })).title ?? name
-          : name
+        const title = r.live ? await retitle(r.id, name) : name
         if (!r.live && !io.rename(r.id, title)) throw new Error("not found")
         const ids = [r.id, r.live?.session_key].filter((id): id is string => Boolean(id))
         home.invalidate("recentSessions")
@@ -945,7 +956,7 @@ export const Sessions = memo((props: Props) => {
       })
       .catch((e: Error) =>
         toast.show({ variant: "error", message: `Rename failed: ${e.message}` }))
-  }, [gw, dialog, toast, sel, patchTitle])
+  }, [gw, io, dialog, toast, sel, patchTitle])
 
   const toggle = useCallback(() => {
     const v = visible[sel]

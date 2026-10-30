@@ -52,6 +52,7 @@ const preset: Record<string, Handler> = {
   }),
   "cli.exec": () => ({ blocked: false, code: 0, output: "✓" }),
   "session.title": p => ({ title: p.title ?? "" }),
+  "session.info": () => ({ title: "", tools: {}, skills: {} }),
   "session.mutate": p => ({ session_id: p.session_id, operation: p.operation, revision: 0 }),
   "session.undo": () => ({ removed: 2 }),
   "session.close": () => ({ closed: true }),
