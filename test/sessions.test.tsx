@@ -13,7 +13,7 @@ const ROWS = [
   { id: "sid-b", title: "Second session", preview: "", message_count: 12, started_at: 1699999000, source: "cli" },
 ]
 
-const NOIO = { list: () => [], search: () => [], remove: () => true, rename: () => true, subagents: () => [], peek: () => [] }
+const NOIO = { list: () => [], search: () => [], remove: () => true, rename: () => true, subagents: () => [], peek: () => [], fence: () => ({ revision: 0, generation: 0 }) }
 
 type T = Awaited<ReturnType<typeof mountNode>>
 
@@ -494,11 +494,11 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("d confirms then deletes via session.delete RPC and reloads", async () => {
+  test("d confirms then deletes via session.mutate RPC and reloads", async () => {
     let listed = ROWS
     const gw = new MockGateway({
       "session.list": () => ({ sessions: listed }),
-      "session.delete": (p) => {
+      "session.mutate": (p) => {
         listed = listed.filter(r => r.id !== p.session_id)
         return { deleted: p.session_id }
       },
@@ -514,16 +514,16 @@ describe("Sessions tab", () => {
     await act(async () => { await t.keys.typeText("y") })
     await until(t, () => t.frame().includes("Sessions (1)"))
 
-    expect(t.gw.last("session.delete")?.params.session_id).toBe("sid-a")
+    expect(t.gw.last("session.mutate")?.params).toMatchObject({ session_id: "sid-a", operation: "delete", expected_revision: 0, payload: {} })
     expect(t.frame()).not.toContain("First session")
     expect(t.frame()).toContain("Second session")
     t.destroy()
   })
 
-  test("session.delete 'active' error surfaces toast, no local fallback", async () => {
+  test("session.mutate 'active' error surfaces toast, no local fallback", async () => {
     const gw = new MockGateway({
       "session.list": () => ({ sessions: ROWS }),
-      "session.delete": () => { throw new Error("cannot delete an active session") },
+      "session.mutate": () => { throw new Error("cannot delete an active session") },
     })
     let local = 0
     const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
@@ -554,12 +554,12 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("session.delete unavailable falls back to io.remove", async () => {
+  test("session.mutate unavailable falls back to io.remove", async () => {
     const deleted: string[] = []
     let listed = ROWS
     const gw = new MockGateway({
       "session.list": () => ({ sessions: listed }),
-      "session.delete": () => { throw new Error("Method not found") },
+      "session.mutate": () => { throw new Error("Method not found") },
     })
     const remove = (sid: string) => {
       deleted.push(sid)
@@ -577,12 +577,12 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("session.delete local gateway process absence falls back to io.remove", async () => {
+  test("session.mutate local gateway process absence falls back to io.remove", async () => {
     const deleted: string[] = []
     let listed = ROWS
     const gw = new MockGateway({
       "session.list": () => ({ sessions: listed }),
-      "session.delete": () => { throw new Error("gateway not running") },
+      "session.mutate": () => { throw new Error("gateway not running") },
     })
     const remove = (sid: string) => {
       deleted.push(sid)
@@ -599,10 +599,10 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("session.delete remote gateway disconnect does not enter local fallback", async () => {
+  test("session.mutate remote gateway disconnect does not enter local fallback", async () => {
     const gw = new MockGateway({
       "session.list": () => ({ sessions: ROWS }),
-      "session.delete": () => { throw new Error("gateway not connected") },
+      "session.mutate": () => { throw new Error("gateway not connected") },
     })
     let local = 0
     const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
@@ -615,10 +615,10 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("session.delete safety failure does not fall back to direct deletion", async () => {
+  test("session.mutate safety failure does not fall back to direct deletion", async () => {
     const gw = new MockGateway({
       "session.list": () => ({ sessions: ROWS }),
-      "session.delete": () => { throw new Error("could not enumerate active sessions") },
+      "session.mutate": () => { throw new Error("could not enumerate active sessions") },
     })
     let local = 0
     const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
@@ -632,25 +632,25 @@ describe("Sessions tab", () => {
     t.destroy()
   })
 
-  test("session.delete timeout fails closed because server outcome is unknown", async () => {
+  test("session.mutate timeout fails closed because server outcome is unknown", async () => {
     const gw = new MockGateway({
       "session.list": () => ({ sessions: ROWS }),
-      "session.delete": () => { throw new Error("timeout: session.delete") },
+      "session.mutate": () => { throw new Error("timeout: session.mutate") },
     })
     let local = 0
     const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })
     await until(t, () => t.frame().includes("Sessions (2)"))
     await act(async () => { await t.keys.typeText("d") })
     await act(async () => { await t.keys.typeText("y") })
-    await until(t, () => t.frame().includes("timeout: session.delete"))
+    await until(t, () => t.frame().includes("timeout: session.mutate"))
     expect(local).toBe(0)
     t.destroy()
   })
 
-  test("session.delete ambiguous timeout text does not enter local fallback", async () => {
+  test("session.mutate ambiguous timeout text does not enter local fallback", async () => {
     const gw = new MockGateway({
       "session.list": () => ({ sessions: ROWS }),
-      "session.delete": () => { throw new Error("timeout waiting for Method not found response") },
+      "session.mutate": () => { throw new Error("timeout waiting for Method not found response") },
     })
     let local = 0
     const t = await mountNode(<Sessions focused io={{ ...NOIO, remove: () => (local++, true) }} />, { gw })

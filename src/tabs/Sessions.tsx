@@ -525,6 +525,7 @@ type IO = {
   peek: P<typeof sdb.peek>
   remove: typeof sdb.remove
   rename: typeof sdb.rename
+  fence: typeof sdb.fence
 }
 
 type Props = {
@@ -557,6 +558,7 @@ export const Sessions = memo((props: Props) => {
     peek: props.io?.peek ?? dbio.peek,
     remove: props.io?.remove ?? sdb.remove,
     rename: props.io?.rename ?? sdb.rename,
+    fence: props.io?.fence ?? sdb.fence,
   }), [props.io])
 
   const fresh = cached && last.home === cacheHome()
@@ -885,10 +887,19 @@ export const Sessions = memo((props: Props) => {
       danger: true,
     }).then(async ok => {
       if (!ok) return
-      // session.delete RPC first — it refuses to remove the active
-      // session and also unlinks transcript files. Fall back to the
-      // direct DELETE only when the gateway rejects/is down.
-      const done = await gw.request<{ deleted: string }>("session.delete", { session_id: r.id })
+      // The canonical socket has no `session.delete`: a delete is a revision-fenced
+      // `session.mutate`, which also refuses the active session and retires the
+      // lineage (the direct DELETE does neither). A row missing from state.db has
+      // no fence to send, so it keeps the local delete.
+      const f = io.fence(r.id)
+      const call = f
+        ? gw.request("session.mutate", {
+          session_id: r.id, request_id: crypto.randomUUID(),
+          expected_revision: f.revision, expected_generation: f.generation,
+          operation: "delete", payload: {},
+        })
+        : Promise.resolve(io.remove(r.id))
+      const done = await call
         .then(() => true)
         .catch((e: Error) => {
           if (/cannot delete an active session/i.test(e.message)) {
@@ -905,7 +916,7 @@ export const Sessions = memo((props: Props) => {
       toast.show({ variant: "success", message: "Session deleted" })
       void load()
     })
-  }, [gw, dialog, toast, load])
+  }, [gw, io, dialog, toast, load])
   confirmDeleteRef.current = confirmDelete
 
   const rename = useCallback(async () => {

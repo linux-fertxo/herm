@@ -580,6 +580,13 @@ export function search(query: string, limit = 30): SessionHit[] {
 // wants. Callers should prefer the session.delete RPC and fall back
 // here only when the gateway is down.
 
+/** The revision/generation pair `session.mutate` compares against, read from the
+ *  row it will write. Null when the row is not in state.db (gateway-only rows). */
+export function fence(sid: string): { revision: number; generation: number } | null {
+  const row = q("SELECT runtime_revision AS revision, runtime_generation AS generation FROM sessions WHERE id = ?")?.get(sid)
+  return (row as { revision: number; generation: number } | undefined) ?? null
+}
+
 export function rename(sid: string, title: string): boolean {
   const db = new Database(conn.path)
   try {
