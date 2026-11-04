@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { attach, type Dial } from "./owner-attach"
-import { canonical } from "./canonical"
+import { canonical, GENERATION_BOUND } from "./canonical"
 import { knownGatewayEvent, type GatewayEvent } from "./wire"
 import { prompt, type ServerRequest } from "./server-requests"
 import { encode } from "../utils/unicode"
@@ -419,6 +419,13 @@ export class GatewayClient extends EventEmitter {
     this.sid = sid
   }
 
+  private async freshGeneration(sessionId: unknown) {
+    if (typeof sessionId !== "string" || !sessionId) return
+    try {
+      await this.request("session.resume", { session_id: sessionId, display_projection: false })
+    } catch { /* si falla, el control saldrá con la generación que hubiera */ }
+  }
+
   async request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (!this.link && !this.stopped) this.start()
     if (this.target !== gatewayUrl() && !this.stopped) this.start()
@@ -431,6 +438,9 @@ export class GatewayClient extends EventEmitter {
     if (generation !== this.generation || this.stopped) throw new Error("gateway restarted")
     const merged = this.sid && params.session_id === undefined && !NO_SESSION_ID.includes(method)
       ? { session_id: this.sid, ...params } : params
+    // La generación cacheada caduca en cuanto arranca un turno, y estos tres
+    // controles la exigen fresca: un resume sin proyección cuesta ~50 ms.
+    if (this.native && GENERATION_BOUND.has(method)) await this.freshGeneration(merged.session_id)
     const frame = this.native ? canonical.prepare(method, merged, contract, this.subscriptions) : { method, params: merged }
     const rid = `r${++this.id}`
     const value = await new Promise<unknown>((resolve, reject) => {

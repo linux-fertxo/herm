@@ -34,6 +34,7 @@ This fork tracks [`liftaris/herm`](https://github.com/liftaris/herm) `dev` and a
 - tabs that ask the gateway for global data (skills, MCP, insights, usage) no longer send a `session_id` the decoder rejects (`4000 Extra`), which left them empty
 - **resume last** (`herm -c` and the splash prompt) reads `created_source`, so the sessions the gateway stamps `source='local'` still count as TUI sessions
 - deleting and renaming a session go through the revision-fenced `session.mutate`, since the canonical socket has no `session.delete`/`session.title` (`-32601 unknown method`)
+- steering, redirecting and interrupting a running turn carry a fresh `execution_generation` (a missing or stale one answers `4001`, so a steer looked like a broken TUI)
 
 No npm package is published from here: build with `bun run build`. The older self-contained rescue (before adopting upstream `#267`/`#263`) is kept at the tag `rescue/pre-upstream-6e15ecf`.
 

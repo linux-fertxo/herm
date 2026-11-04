@@ -33,13 +33,19 @@ test("owner attach sends profile-scoped fresh tickets, canonical chat parameters
     backend.send({ method: "event", params: { type: "message.start", session_id: "s1", execution_generation: 2 } })
     await Bun.sleep(5)
     await client.request("session.interrupt")
-    expect(backend.frames.find(f => f.method === "session.interrupt")?.params).toEqual({ session_id: "s1", execution_generation: 2 })
+    // La generación cacheada caduca al arrancar el turno: los controles piden un
+    // resume sin proyección antes de enviarse, y usan la que devuelve el gateway.
+    const resumes = backend.frames.filter(f => f.method === "session.resume").map(f => f.params)
+    expect(resumes).toContainEqual({ session_id: "s1", display_projection: false })
+    expect(backend.frames.find(f => f.method === "session.interrupt")?.params).toEqual({ session_id: "s1", execution_generation: 0 })
+    await client.request("session.steer", { text: "nudge" })
+    expect(backend.frames.find(f => f.method === "session.steer")?.params).toEqual({ session_id: "s1", text: "nudge", execution_generation: 0 })
     await client.request("session.activate", { session_id: first.session_id })
     await client.request("session.close", { session_id: first.session_id })
     const create = backend.frames.find(f => f.method === "session.create")!
     expect(create.params).toEqual({ source: "tui", request_id: expect.any(String), cwd: process.cwd() })
     expect(backend.frames.find(f => f.method === "prompt.submit")?.params).toEqual({ session_id: "s1", input_id: expect.any(String), text: "hello" })
-    expect(backend.frames.find(f => f.method === "session.resume")?.params).toEqual({ session_id: "s1", display_projection: true })
+    expect(backend.frames.filter(f => f.method === "session.resume").map(f => f.params)).toContainEqual({ session_id: "s1", display_projection: true })
     expect(backend.frames.find(f => f.method === "session.detach")?.params).toEqual({ session_id: "s1", subscription_id: "sub1" })
     client.start()
     await wait(() => backend.dials.length === 2 && client.ready)

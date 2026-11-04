@@ -1,6 +1,10 @@
 export type Creation = { sources: string[]; parameters: string[] }
 export type Subscription = { id: string; generation: number }
 
+// Controles atados a la generación del turno: sin ella el gateway responde
+// invalid_params, y con una vieja, stale_generation.
+export const GENERATION_BOUND = new Set(["session.interrupt", "session.steer", "session.redirect"])
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
@@ -26,7 +30,7 @@ export function prepare(method: string, original: Record<string, unknown>, contr
   }
   if (method === "session.activate" || method === "session.resume") {
     method = "session.resume"
-    params.display_projection = true
+    params.display_projection ??= true
   }
   if (method === "session.close") {
     method = "session.detach"
@@ -34,7 +38,7 @@ export function prepare(method: string, original: Record<string, unknown>, contr
     if (!subscription) throw new Error(`no subscription for session ${params.session_id}`)
     params.subscription_id = subscription.id
   }
-  if (method === "session.interrupt") {
+  if (GENERATION_BOUND.has(method)) {
     const subscription = subscriptions.get(String(params.session_id))
     if (!subscription) throw new Error(`no subscription for session ${params.session_id}`)
     params.execution_generation = subscription.generation
