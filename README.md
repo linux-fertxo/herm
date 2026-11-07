@@ -35,6 +35,7 @@ This fork tracks [`liftaris/herm`](https://github.com/liftaris/herm) `dev` and a
 - **resume last** (`herm -c` and the splash prompt) reads `created_source`, so the sessions the gateway stamps `source='local'` still count as TUI sessions
 - deleting and renaming a session go through the revision-fenced `session.mutate`, since the canonical socket has no `session.delete`/`session.title` (`-32601 unknown method`)
 - steering, redirecting and interrupting a running turn carry a fresh `execution_generation` (a missing or stale one answers `4001`, so a steer looked like a broken TUI)
+- `/model` — and the model picker's session scope — commit through the revision-fenced `session.mutate operation=model`, because `config.set key=model` is now refused with `use_session_mutation_model`
 
 No npm package is published from here: build with `bun run build`. The older self-contained rescue (before adopting upstream `#267`/`#263`) is kept at the tag `rescue/pre-upstream-6e15ecf`.
 

@@ -14,6 +14,7 @@ import { SecretPrompt } from "./secret-prompt"
 import { useTheme } from "../theme"
 import { useToast } from "../ui/toast"
 import { useKeys } from "../keys/context"
+import { switchSessionModel } from "../service/model-switch"
 import type { Gateway } from "../context/gateway"
 import type { ConfigSetResponse, ModelOptionProvider, ModelOptionsResponse } from "../context/wire"
 
@@ -21,6 +22,10 @@ type Step = "provider" | "model" | "setup"
 
 type Props = {
   gw: Gateway
+  /** The durable session id (resumeId) whose state.db row carries the fence for
+   *  a session-scope `session.mutate operation=model`. Absent → the dialog
+   *  falls back to the legacy `config.set` (refused by current gateways). */
+  sid?: string
   /** Override the default "switch this session / global" apply. When
    *  set, the scope toggle is hidden and the caller owns the write. */
   onApply?: (provider: string, model: string) => Promise<void>
@@ -103,6 +108,18 @@ const ModelPickerDialog = (props: Props) => {
   const apply = useCallback((model: string, prov: string) => {
     if (props.onApply) return void props.onApply(prov, model)
       .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+    // Session-scope model pick is revision-fenced `session.mutate operation=model`;
+    // `config.set key=model` is refused by current gateways. Without a durable
+    // sid there is no fence to read, so fall back to the legacy verb.
+    if (props.sid && !global) {
+      void switchSessionModel(props.gw, props.sid, `${model} --provider ${prov}`)
+        .then(r => {
+          toast.show({ variant: "success", message: `model → ${r.model ?? model}${r.status === "deferred" ? " (next turn)" : ""}` })
+          if (r.status === "confirmation_required") toast.show({ variant: "warning", message: r.confirm_message ?? "switch requires confirmation" })
+        })
+        .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
+      return
+    }
     const value = `${model} --provider ${prov}${global ? " --global" : ""}`
     props.gw.request<ConfigSetResponse>("config.set", global
       ? { key: "model", value, session_id: undefined }
@@ -112,7 +129,7 @@ const ModelPickerDialog = (props: Props) => {
         if (r.warning) toast.show({ variant: "warning", message: r.warning })
       })
       .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
-  }, [props.gw, props.onApply, global, toast])
+  }, [props.gw, props.onApply, props.sid, global, toast])
 
   const submitKey = useCallback(async (p: ModelOptionProvider, key: string) => {
     try {
@@ -245,7 +262,7 @@ const ModelPickerDialog = (props: Props) => {
 
 export const openModelPicker = (
   dialog: ReturnType<typeof useDialog>, gw: Gateway,
-  opts?: { title?: string; onApply?: (provider: string, model: string) => Promise<void>; refresh?: boolean },
+  opts?: { title?: string; onApply?: (provider: string, model: string) => Promise<void>; refresh?: boolean; sid?: string },
 ) => {
-  dialog.replace(<ModelPickerDialog gw={gw} title={opts?.title} onApply={opts?.onApply} refresh={opts?.refresh} />)
+  dialog.replace(<ModelPickerDialog gw={gw} title={opts?.title} onApply={opts?.onApply} sid={opts?.sid} refresh={opts?.refresh} />)
 }

@@ -29,6 +29,7 @@ import { openHistory } from "../dialogs/history"
 import { openStatus, openUsage, openProfile } from "../dialogs/info"
 import { openChafa } from "../dialogs/chafa"
 import * as sdb from "../service/sessions-db"
+import { switchSessionModel } from "../service/model-switch"
 import { skins, mode as skinMode, type SkinState } from "../context/skin"
 import { copyText as clipCopy } from "../utils/clipboard"
 import * as preferences from "../context/preferences"
@@ -389,13 +390,17 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
           return
         }
         case "model":
-          if (!arg) { openModelPicker(dialog, gw); return }
-          if (arg.trim() === "--refresh") { openModelPicker(dialog, gw, { refresh: true }); return }
-          gw.request<{ value?: string; warning?: string }>("config.set",
-            { key: "model", value: arg })
+          if (!arg) { openModelPicker(dialog, gw, { sid: x.resumeId }); return }
+          if (arg.trim() === "--refresh") { openModelPicker(dialog, gw, { refresh: true, sid: x.resumeId }); return }
+          // Model switch is now `session.mutate operation=model` (revision-fenced);
+          // `config.set key=model` is refused with `use_session_mutation_model`.
+          switchSessionModel(gw, x.resumeId, arg)
             .then(r => {
-              if (r.warning) toast.show({ variant: "warning", message: r.warning })
-              x.dispatch({ kind: "system", text: `model → ${r.value ?? arg}` })
+              if (r.status === "confirmation_required") {
+                toast.show({ variant: "warning", message: r.confirm_message ?? "switch requires confirmation" })
+                return
+              }
+              x.dispatch({ kind: "system", text: `model → ${r.model ?? arg}${r.status === "deferred" ? " (next turn)" : ""}` })
             })
             .catch((e: Error) => toast.show({ variant: "error", message: e.message }))
           return
@@ -660,7 +665,7 @@ export function useSlash(c: SlashCtx): (cmd: SlashCommand, arg?: string) => void
     { title: "Switch Theme", value: "theme", action: "theme.pick", category: "General",
       onSelect: () => openThemePicker(dialog, themeCtx) },
     { title: "Switch Model", value: "model", action: "model.pick", category: "General",
-      onSelect: () => openModelPicker(dialog, gw) },
+      onSelect: () => openModelPicker(dialog, gw, { sid: ctx.current.resumeId }) },
     { title: "Pick Avatar", value: "eikon", description: "Choose sidebar .eikon avatar", category: "General",
       onSelect: () => pickEikon() },
     { title: "Rollback", value: "rollback", description: "Browse & restore checkpoints", category: "Session",
